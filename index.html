@@ -510,6 +510,7 @@
     <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 10px">Divides this invoice's total of <b id="sp_total">RM 0.00</b> equally and creates one invoice per person — each gets its own invoice number. Enter one person per line, optionally <i>Name, Phone</i>.</p>
     <textarea id="sp_names" rows="6" placeholder="Ali bin Abu, 0123456789&#10;Siti Kassim&#10;Chong Wei&#10;…" style="width:100%;font-family:inherit;font-size:13px;border:1px solid var(--line);border-radius:8px;padding:10px" oninput="updateSplitPreview()"></textarea>
     <div id="sp_preview" style="font-size:13px;margin:10px 0 0;min-height:20px"></div>
+    <label class="inline-toggle" style="margin:10px 0 0"><input type="checkbox" id="sp_tg"> Send each invoice to Telegram after creating</label>
     <div class="actions" style="justify-content:flex-end;margin-top:12px">
       <button class="btn btn-ghost" onclick="closeSplit()">Cancel</button>
       <button class="btn btn-gold" id="sp_go" onclick="splitCreate()">Create invoices</button>
@@ -688,6 +689,7 @@ function itemAdd(item,desc,qty,price){
 }
 function pkgAdd(sel){ if(sel.value==='') return; var p=CATALOG[+sel.value]; itemAdd(p.name,document.getElementById('s_bill').value||'Lifetime',1,p.price); sel.value=''; }
 function newSingle(){
+  CUR_REMOTE=null;
   if(sbReady()){ document.getElementById('s_no').value=''; document.getElementById('s_no').placeholder='Auto — assigned on save'; }
   else { document.getElementById('s_no').value=SETTINGS.nextNumber; document.getElementById('s_no').placeholder=''; }
   document.getElementById('s_status').value='Unpaid';
@@ -710,6 +712,7 @@ function openSplit(){
   SPLIT_BASE=inv;
   document.getElementById('sp_total').textContent=money(t.total);
   document.getElementById('sp_names').value=(inv.name?inv.name:'');
+  document.getElementById('sp_tg').checked=tgConfigured();
   document.getElementById('splitModal').classList.add('show');
   updateSplitPreview();
 }
@@ -738,8 +741,9 @@ async function splitCreate(){
   if(n<2){ toast('Enter at least 2 people'); return; }
   var sh=splitShares(t,n);
   var pkg=((base.items||[])[0]||{}).item || 'Team Package';
+  var sendTg=document.getElementById('sp_tg').checked;
   var btn=document.getElementById('sp_go'); btn.disabled=true; btn.textContent='Creating…';
-  var made=0, failed=0;
+  var created=[], failed=0;
   for(var i=0;i<n;i++){
     var inv={ id:uid(), number:'', status:base.status, date:base.date, due:base.due,
       name:ppl[i].name||('Member '+(i+1)), phone:ppl[i].phone||'', email:'',
@@ -751,25 +755,32 @@ async function splitCreate(){
       try{ var r=await issueInvoiceRemote(inv); inv.number=r.number; inv.remoteId=r.id; inv.synced=true; }
       catch(e){ failed++; inv.synced=false; console.error(e); }
     } else { inv.synced=false; inv.number=SETTINGS.nextNumber; SETTINGS.nextNumber=bumpNumber(SETTINGS.nextNumber,1); }
-    BATCH.push(inv); made++;
+    BATCH.push(inv); created.push(inv);
   }
-  persist(); renderBatch(); btn.disabled=false; btn.textContent='Create invoices'; closeSplit(); switchTab('batch');
-  toast(made+' split invoices created'+(failed?(' · '+failed+' not issued'):''));
+  persist(); renderBatch(); closeSplit(); switchTab('batch');
+  toast(created.length+' split invoices created'+(failed?(' · '+failed+' not issued'):''));
+  if(sendTg){
+    if(!tgConfigured()){ toast('Telegram not set in ⚙ Settings — skipped sending'); }
+    else{
+      var sent=0, sfail=0;
+      for(var j=0;j<created.length;j++){
+        toast('Sending '+(j+1)+'/'+created.length+' to Telegram…');
+        try{ var pdf=await makePdf(created[j]); await sendTelegram(pdf.output('blob'), fileName(created[j]), tgCaption(created[j])); sent++; }
+        catch(e){ sfail++; console.error(e); }
+      }
+      toast('Telegram · sent '+sent+(sfail?(' · '+sfail+' failed'):'')+' ✓');
+    }
+  }
+  btn.disabled=false; btn.textContent='Create invoices';
 }
 async function saveToBatch(){
   var inv=readSingle();
   if(!inv.name){ toast('Add a customer name first'); return; }
-  if(sbReady()){
-    toast('Issuing number…');
-    try{ var r=await issueInvoiceRemote(inv); inv.number=r.number; inv.remoteId=r.id; inv.synced=true; }
-    catch(e){ toast('Backend error — invoice not issued'); console.error(e); return; }
-  } else {
-    inv.synced=false;
-    SETTINGS.nextNumber=bumpNumber(inv.number||SETTINGS.nextNumber,1);
-  }
+  inv=await ensureIssuedSingle(inv);
+  if(sbReady() && !inv.remoteId){ toast('Backend error — invoice not issued'); return; }
   BATCH.push(inv);
   persist(); renderBatch(); newSingle();
-  toast('Saved · '+inv.number+(inv.synced?' (central)':' (local)'));
+  toast('Saved · '+(inv.number||'(no number)')+(inv.synced?' (central)':' (local)'));
 }
 
 /* ---------- PDF engine ---------- */
@@ -870,18 +881,31 @@ async function makePdf(inv){
   var c=await invoiceCanvas(inv); addCanvasToPdf(pdf,c);
   return pdf;
 }
+var CUR_REMOTE=null;
+async function ensureIssuedSingle(inv){
+  if((inv.number||'').trim()){ inv.remoteId=CUR_REMOTE; inv.synced=!!CUR_REMOTE; return inv; }
+  if(sbReady()){
+    toast('Recording invoice…');
+    try{ var r=await issueInvoiceRemote(inv); inv.number=r.number; inv.remoteId=r.id; inv.synced=true; CUR_REMOTE=r.id; document.getElementById('s_no').value=r.number; }
+    catch(e){ console.error(e); toast('⚠ Could not record to server — produced without a number'); }
+  } else if(SETTINGS.nextNumber){
+    inv.number=SETTINGS.nextNumber; document.getElementById('s_no').value=inv.number; SETTINGS.nextNumber=bumpNumber(SETTINGS.nextNumber,1); persist();
+  }
+  return inv;
+}
 async function downloadSingle(){
   var inv=readSingle();
   if(!inv.name){ toast('Add a customer name first'); return; }
+  inv=await ensureIssuedSingle(inv);
   toast('Building PDF…');
   try{
     var pdf=await makePdf(inv), name=fileName(inv);
     pdf.save(name);
     if(SETTINGS.tgAuto && tgConfigured()){
       toast('Sending to Telegram…');
-      try{ await sendTelegram(pdf.output('blob'), name, tgCaption(inv)); toast('Downloaded & sent to Telegram ✓'); }
+      try{ await sendTelegram(pdf.output('blob'), name, tgCaption(inv)); toast('Recorded · downloaded · sent to Telegram ✓'); }
       catch(e){ toast('Downloaded · Telegram failed: '+e.message); console.error(e); }
-    } else { toast('PDF downloaded'); }
+    } else { toast('Recorded & downloaded · '+(inv.number||'')); }
   }
   catch(e){ toast('PDF failed — check internet for libraries'); console.error(e); }
 }
@@ -896,8 +920,9 @@ async function sendSingleTelegram(){
   var inv=readSingle();
   if(!inv.name){ toast('Add a customer name first'); return; }
   if(!tgConfigured()){ toast('Set Telegram bot token & chat ID in ⚙ Settings'); return; }
+  inv=await ensureIssuedSingle(inv);
   toast('Building & sending…');
-  try{ var pdf=await makePdf(inv); await sendTelegram(pdf.output('blob'), fileName(inv), tgCaption(inv)); toast('Sent to Telegram ✓'); }
+  try{ var pdf=await makePdf(inv); await sendTelegram(pdf.output('blob'), fileName(inv), tgCaption(inv)); toast('Recorded & sent to Telegram ✓ · '+(inv.number||'')); }
   catch(e){ toast('Telegram failed: '+e.message); console.error(e); }
 }
 
