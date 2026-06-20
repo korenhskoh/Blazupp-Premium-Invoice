@@ -99,7 +99,7 @@
   .batch-toolbar .sum{margin-left:auto;font-size:13px;color:var(--ink-soft);text-align:right}
   .batch-toolbar .sum b{font-family:'Plus Jakarta Sans',sans-serif;color:var(--ink);font-size:15px}
   .blist{display:flex;flex-direction:column;gap:8px}
-  .brow{display:grid;grid-template-columns:26px 116px 1fr 130px 110px 96px 88px;gap:12px;align-items:center;
+  .brow{display:grid;grid-template-columns:26px 116px 1fr 130px 110px 96px 184px;gap:12px;align-items:center;
     background:#fff;border:1px solid var(--line);border-radius:10px;padding:11px 14px}
   .brow input[type=checkbox]{accent-color:var(--blue);width:16px;height:16px}
   .brow .no{font-family:'Plus Jakarta Sans',sans-serif;font-weight:700;font-size:13px}
@@ -252,11 +252,12 @@
     <button class="tab active" data-tab="single" onclick="switchTab('single')">Single</button>
     <button class="tab" data-tab="bulk" onclick="switchTab('bulk')">Bulk</button>
     <button class="tab" data-tab="batch" onclick="switchTab('batch')">Batch<span class="pill" id="batchCount">0</span></button>
+    <button class="tab admin-only" data-tab="records" onclick="switchTab('records')" style="display:none">Records</button>
     <button class="tab admin-only" data-tab="staff" onclick="switchTab('staff')" style="display:none">Staff</button>
     <button class="tab admin-only" data-tab="audit" onclick="switchTab('audit')" style="display:none">Audit</button>
   </div>
   <span class="userchip" id="userchip"></span>
-  <button class="iconbtn" onclick="openSettings()">⚙</button>
+  <button class="iconbtn admin-only" onclick="openSettings()" style="display:none">⚙</button>
   <button class="iconbtn" onclick="signOut()">Sign out</button>
 </div>
 
@@ -320,6 +321,8 @@
 
         <div class="actions">
           <button class="btn btn-gold" onclick="downloadSingle()">⬇ Download PDF</button>
+          <button class="btn btn-blue" onclick="viewSingle()">👁 View</button>
+          <button class="btn btn-ghost" onclick="sendSingleTelegram()">✈ Telegram</button>
           <button class="btn btn-blue" onclick="saveToBatch()">Save to Batch</button>
           <button class="btn btn-ghost" onclick="newSingle()">New</button>
         </div>
@@ -365,7 +368,6 @@
       <button class="btn btn-ghost btn-sm" onclick="document.getElementById('importJson').click()">Import data</button>
       <input type="file" id="importJson" accept="application/json" hidden onchange="importJSON(event)">
       <button class="btn btn-ghost btn-sm" onclick="clearBatch()">Clear</button>
-      <button class="btn btn-ghost btn-sm" onclick="openLedger()">📒 Master Ledger</button>
       <div class="sum">Selected <b id="selCount">0</b> · Batch value <b id="batchValue">RM 0.00</b></div>
     </div>
     <div id="batchList"></div>
@@ -397,6 +399,21 @@
       <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="loadAudit()">Refresh</button>
     </div>
     <div class="card" id="auditList" style="padding:6px 0"></div>
+  </div>
+
+  <!-- ============ RECORDS (admin) ============ -->
+  <div class="panel" id="panel-records">
+    <div class="batch-toolbar">
+      <b style="font-size:14px">Invoice records</b>
+      <label class="inline-toggle" style="margin:0">Staff
+        <select id="rec_filter" onchange="renderRecords()" style="margin-left:6px;padding:5px 8px;border:1px solid var(--line);border-radius:8px">
+          <option value="">All staff</option>
+        </select>
+      </label>
+      <button class="btn btn-ghost btn-sm" onclick="loadRecords()">Refresh</button>
+      <div class="sum" id="rec_sum" style="margin-left:auto"></div>
+    </div>
+    <div class="card" id="recordsList" style="padding:6px 0"></div>
   </div>
 
 </div>
@@ -446,6 +463,13 @@
       <div class="field"><label>Next invoice no.</label><input id="set_next"></div>
     </div>
     <div class="field"><label>Thank-you / payment note</label><textarea id="set_thanks" rows="2"></textarea></div>
+    <h2 style="font-family:'Plus Jakarta Sans';font-size:14px;margin:18px 0 6px">Telegram delivery</h2>
+    <p style="font-size:12px;color:var(--ink-soft);margin:0 0 10px">Send invoice PDFs to a Telegram chat/group via your bot. Get a token from <b>@BotFather</b>; get the chat ID from <b>@userinfobot</b> (personal) or add your bot to a group and read it via getUpdates.</p>
+    <div class="field"><label>Bot token</label><input id="set_tgtoken" placeholder="123456789:ABCdef..." autocomplete="off" autocapitalize="none"></div>
+    <div class="row2">
+      <div class="field"><label>Chat ID</label><input id="set_tgchat" placeholder="e.g. 812345678 or -1001234567890"></div>
+      <div class="field"><label>&nbsp;</label><label class="inline-toggle" style="margin:0;padding:9px 0"><input type="checkbox" id="set_tgauto"> Auto-send on Download PDF</label></div>
+    </div>
     <div class="actions" style="justify-content:flex-end">
       <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
       <button class="btn btn-gold" onclick="saveSettings()">Save settings</button>
@@ -500,6 +524,7 @@ var SETTINGS = {
   nextNumber:'B190700',
   thanks:'Please make payment by the due date via bank transfer to the account above. Thank you for your business! For any questions, contact us at +60 11-2309 9692.',
   sellerTin:'', sellerBrn:'', sellerSst:'', msic:'', classification:'',   // e-Invoice (LHDN/MyInvois) identity
+  tgToken:'', tgChat:'', tgAuto:false,   // Telegram bot delivery
   sbUrl:'', sbKey:''
 };
 var SESSION = null;   // {token, username, role, display} once logged in
@@ -682,6 +707,27 @@ function fileName(inv){
   return name+'_'+bill+'_'+fileDate(inv.date)+'_Blazupp_invoice.pdf';
 }
 
+/* ---------- Telegram delivery ---------- */
+function tgConfigured(){ return !!((SETTINGS.tgToken||'').trim() && (SETTINGS.tgChat||'').trim()); }
+function tgCaption(inv){ var t=totalsOf(inv); return (inv.number?('Invoice '+inv.number):'Invoice')+' — '+(inv.name||'')+'\n'+(inv.bill||'')+' · '+money(t.total)+' · '+(inv.status||''); }
+async function sendTelegram(blob, filename, caption){
+  if(!tgConfigured()) throw new Error('Telegram not configured');
+  var fd=new FormData();
+  fd.append('chat_id',(SETTINGS.tgChat||'').trim());
+  if(caption) fd.append('caption',caption);
+  fd.append('document', blob, filename);
+  var res=await fetch('https://api.telegram.org/bot'+(SETTINGS.tgToken||'').trim()+'/sendDocument',{method:'POST',body:fd});
+  var j=await res.json().catch(function(){return {};});
+  if(!res.ok || !j.ok) throw new Error(j.description||('HTTP '+res.status));
+  return true;
+}
+function openPdfBlob(blob){
+  var url=URL.createObjectURL(blob);
+  var w=window.open(url,'_blank');
+  if(!w){ var a=document.createElement('a'); a.href=url; a.target='_blank'; a.rel='noopener'; document.body.appendChild(a); a.click(); a.remove(); }
+  setTimeout(function(){ URL.revokeObjectURL(url); },60000);
+}
+
 async function makePdf(inv){
   var jsPDF=window.jspdf.jsPDF;
   var pdf=new jsPDF('p','mm','a4');
@@ -692,8 +738,31 @@ async function downloadSingle(){
   var inv=readSingle();
   if(!inv.name){ toast('Add a customer name first'); return; }
   toast('Building PDF…');
-  try{ var pdf=await makePdf(inv); pdf.save(fileName(inv)); }
+  try{
+    var pdf=await makePdf(inv), name=fileName(inv);
+    pdf.save(name);
+    if(SETTINGS.tgAuto && tgConfigured()){
+      toast('Sending to Telegram…');
+      try{ await sendTelegram(pdf.output('blob'), name, tgCaption(inv)); toast('Downloaded & sent to Telegram ✓'); }
+      catch(e){ toast('Downloaded · Telegram failed: '+e.message); console.error(e); }
+    } else { toast('PDF downloaded'); }
+  }
   catch(e){ toast('PDF failed — check internet for libraries'); console.error(e); }
+}
+async function viewSingle(){
+  var inv=readSingle();
+  if(!inv.name){ toast('Add a customer name first'); return; }
+  toast('Building PDF…');
+  try{ var pdf=await makePdf(inv); openPdfBlob(pdf.output('blob')); toast('Opened PDF'); }
+  catch(e){ toast('PDF failed'); console.error(e); }
+}
+async function sendSingleTelegram(){
+  var inv=readSingle();
+  if(!inv.name){ toast('Add a customer name first'); return; }
+  if(!tgConfigured()){ toast('Set Telegram bot token & chat ID in ⚙ Settings'); return; }
+  toast('Building & sending…');
+  try{ var pdf=await makePdf(inv); await sendTelegram(pdf.output('blob'), fileName(inv), tgCaption(inv)); toast('Sent to Telegram ✓'); }
+  catch(e){ toast('Telegram failed: '+e.message); console.error(e); }
 }
 
 function selectedInvoices(){
@@ -742,7 +811,9 @@ function renderBatch(){
       +'<span class="pkg">'+esc(pkg||'—')+'</span>'
       +'<span class="tot">'+money(t.total)+'</span>'
       +'<button class="badge status '+inv.status+'" onclick="cycleStatus(\''+inv.id+'\')">'+inv.status+'</button>'
-      +'<span class="ops"><button class="op" onclick="previewOne(\''+inv.id+'\')">PDF</button>'
+      +'<span class="ops"><button class="op" title="View PDF" onclick="viewOne(\''+inv.id+'\')">👁</button>'
+      +'<button class="op" title="Send to Telegram" onclick="sendOne(\''+inv.id+'\')">✈</button>'
+      +'<button class="op" title="Download PDF" onclick="previewOne(\''+inv.id+'\')">⬇</button>'
       +'<button class="op" onclick="editOne(\''+inv.id+'\')">Edit</button>'
       +'<button class="op" onclick="removeOne(\''+inv.id+'\')">✕</button></span></div>';
   }).join('');
@@ -759,6 +830,8 @@ function toggleAll(cb){ document.querySelectorAll('#batchList .chk input').forEa
 function cycleStatus(id){ var inv=BATCH.find(function(x){return x.id===id;}); if(!inv)return; var o=['Unpaid','Paid','Overdue']; inv.status=o[(o.indexOf(inv.status)+1)%3]; persist(); renderBatch(); }
 function removeOne(id){ BATCH=BATCH.filter(function(x){return x.id!==id;}); persist(); renderBatch(); }
 async function previewOne(id){ var inv=BATCH.find(function(x){return x.id===id;}); if(!inv)return; toast('Building PDF…'); try{ var pdf=await makePdf(inv); pdf.save(fileName(inv)); }catch(e){ toast('PDF failed'); console.error(e);} }
+async function viewOne(id){ var inv=BATCH.find(function(x){return x.id===id;}); if(!inv)return; toast('Building PDF…'); try{ var pdf=await makePdf(inv); openPdfBlob(pdf.output('blob')); }catch(e){ toast('PDF failed'); console.error(e);} }
+async function sendOne(id){ var inv=BATCH.find(function(x){return x.id===id;}); if(!inv)return; if(!tgConfigured()){ toast('Set Telegram in ⚙ Settings'); return; } toast('Sending to Telegram…'); try{ var pdf=await makePdf(inv); await sendTelegram(pdf.output('blob'), fileName(inv), tgCaption(inv)); toast('Sent to Telegram ✓'); }catch(e){ toast('Telegram failed: '+e.message); console.error(e);} }
 function editOne(id){ var inv=BATCH.find(function(x){return x.id===id;}); if(!inv)return;
   document.getElementById('s_no').value=inv.number; document.getElementById('s_status').value=inv.status;
   document.getElementById('s_date').value=inv.date; document.getElementById('s_due').value=inv.due;
@@ -793,6 +866,39 @@ async function loadLedger(){
       +'</tbody></table>';
     sum.textContent=rows.length+' invoices · total '+money(total);
   }catch(e){ body.innerHTML='<div class="empty">Could not load records — please sign in again.</div>'; console.error(e); }
+}
+
+/* ---------- Records tab (admin: all staff invoices) ---------- */
+var RECORDS=[];
+async function loadRecords(){
+  var host=document.getElementById('recordsList'), sel=document.getElementById('rec_filter');
+  host.innerHTML='<div class="empty">Loading…</div>';
+  try{
+    RECORDS=await sbRpc('list_invoices',{p_token:SESSION.token})||[];
+    var keep=sel.value;
+    var staff=Array.from(new Set(RECORDS.map(function(r){return r.issuer||'';}))).filter(Boolean).sort();
+    sel.innerHTML='<option value="">All staff ('+RECORDS.length+')</option>'+staff.map(function(u){
+      var n=RECORDS.filter(function(r){return r.issuer===u;}).length;
+      return '<option value="'+esc(u)+'">'+esc(u)+' ('+n+')</option>'; }).join('');
+    if(keep&&staff.indexOf(keep)>=0) sel.value=keep;
+    renderRecords();
+  }catch(e){ host.innerHTML='<div class="empty">Could not load records — please sign in again.</div>'; document.getElementById('rec_sum').textContent=''; console.error(e); }
+}
+function renderRecords(){
+  var host=document.getElementById('recordsList'), sumEl=document.getElementById('rec_sum');
+  var f=document.getElementById('rec_filter').value;
+  var rows=f?RECORDS.filter(function(r){return r.issuer===f;}):RECORDS;
+  if(!rows.length){ host.innerHTML='<div class="empty">No invoices'+(f?' from '+esc(f):' recorded yet')+'.</div>'; sumEl.textContent=''; return; }
+  var total=rows.reduce(function(a,r){return a+Number(r.total||0);},0);
+  var paid=rows.filter(function(r){return r.status==='Paid';}).reduce(function(a,r){return a+Number(r.total||0);},0);
+  sumEl.innerHTML='<b>'+rows.length+'</b> invoices · billed <b>'+money(total)+'</b> · paid <b>'+money(paid)+'</b>';
+  host.innerHTML='<table class="bulk" style="min-width:680px"><thead><tr><th>No.</th><th>Staff</th><th>Customer</th><th>Type</th>'
+    +'<th style="text-align:right">Total</th><th>Status</th><th>Date</th></tr></thead><tbody>'
+    +rows.map(function(r){ return '<tr><td style="padding:8px">'+esc(r.number)+'</td><td style="padding:8px"><b>'+esc(r.issuer||'')+'</b></td>'
+      +'<td style="padding:8px">'+esc(r.customer_name||'')+'<br><small style="color:#999">'+esc(r.customer_phone||'')+'</small></td>'
+      +'<td style="padding:8px">'+esc(r.billing_type||'')+'</td><td style="padding:8px;text-align:right;white-space:nowrap">'+money(Number(r.total||0))+'</td>'
+      +'<td style="padding:8px">'+esc(r.status||'')+'</td><td style="padding:8px;white-space:nowrap">'+esc(String(r.issue_date||r.created_at||'').slice(0,10))+'</td></tr>'; }).join('')
+    +'</tbody></table>';
 }
 
 /* ---------- Bulk ---------- */
@@ -858,6 +964,9 @@ function openSettings(){
   document.getElementById('set_tin').value=SETTINGS.sellerTin||''; document.getElementById('set_brn').value=SETTINGS.sellerBrn||'';
   document.getElementById('set_sst').value=SETTINGS.sellerSst||''; document.getElementById('set_msic').value=SETTINGS.msic||'';
   document.getElementById('set_class').value=SETTINGS.classification||'';
+  document.getElementById('set_tgtoken').value=SETTINGS.tgToken||'';
+  document.getElementById('set_tgchat').value=SETTINGS.tgChat||'';
+  document.getElementById('set_tgauto').checked=!!SETTINGS.tgAuto;
   document.getElementById('settingsModal').classList.add('show');
 }
 function closeSettings(){ document.getElementById('settingsModal').classList.remove('show'); }
@@ -870,7 +979,11 @@ function saveSettings(){
   SETTINGS.sellerTin=document.getElementById('set_tin').value; SETTINGS.sellerBrn=document.getElementById('set_brn').value;
   SETTINGS.sellerSst=document.getElementById('set_sst').value; SETTINGS.msic=document.getElementById('set_msic').value;
   SETTINGS.classification=document.getElementById('set_class').value;
-  persist(); closeSettings(); refreshPreview(); renderBatch(); newSingle(); toast('Settings saved');
+  SETTINGS.tgToken=document.getElementById('set_tgtoken').value.trim();
+  SETTINGS.tgChat=document.getElementById('set_tgchat').value.trim();
+  SETTINGS.tgAuto=document.getElementById('set_tgauto').checked;
+  persist(); closeSettings(); refreshPreview(); renderBatch(); newSingle();
+  pushCentralSettings(); toast('Settings saved');
 }
 function persist(){ try{ localStorage.setItem(STORE_KEY, JSON.stringify({s:SETTINGS,b:BATCH})); }catch(e){} }
 function restore(){ try{ var d=JSON.parse(localStorage.getItem(STORE_KEY)); if(d){ if(d.s) SETTINGS=Object.assign(SETTINGS,d.s); if(Array.isArray(d.b)) BATCH=d.b; } }catch(e){} }
@@ -891,6 +1004,7 @@ function switchTab(name){
   document.querySelectorAll('.panel').forEach(function(p){ p.classList.toggle('active',p.id==='panel-'+name); });
   if(name==='staff') loadStaff();
   if(name==='audit') loadAudit();
+  if(name==='records') loadRecords();
 }
 
 /* ---------------- Auth ---------------- */
@@ -899,13 +1013,29 @@ function showLogin(){
   document.querySelector('.appbar').style.display='none';
   document.getElementById('lg_pass').value='';
 }
-function onAuthed(){
+async function onAuthed(){
   document.getElementById('loginScreen').style.display='none';
   document.querySelector('.appbar').style.display='flex';
   var admin = SESSION.role==='admin';
   document.querySelectorAll('.admin-only').forEach(function(el){ el.style.display = admin?'':'none'; });
   document.getElementById('userchip').innerHTML='<b>'+esc(SESSION.display||SESSION.username)+'</b><span class="role '+(admin?'':'staff')+'">'+esc(SESSION.role)+'</span>';
+  await loadCentralSettings();
   switchTab('single');
+}
+var CENTRAL_KEYS=['company','tagline','bankName','accName','accNo','swift','currency','thanks','sellerTin','sellerBrn','sellerSst','msic','classification','tgToken','tgChat','tgAuto'];
+async function loadCentralSettings(){
+  try{
+    var d=await sbRpc('get_settings',{p_token:SESSION.token});
+    if(d&&typeof d==='object'){ CENTRAL_KEYS.forEach(function(k){ if(d[k]!=null&&d[k]!=='') SETTINGS[k]=d[k]; }); persist(); refreshPreview(); renderBatch(); newSingle(); }
+  }catch(e){ console.error('settings load',e); }
+}
+async function pushCentralSettings(){
+  if(!SESSION||SESSION.role!=='admin') return;
+  try{
+    var payload={}; CENTRAL_KEYS.forEach(function(k){ payload[k]=SETTINGS[k]; });
+    await sbRpc('save_settings',{p_token:SESSION.token,p_data:payload});
+    toast('Settings saved for all staff');
+  }catch(e){ toast('Saved locally; central save failed'); console.error(e); }
 }
 async function doLogin(){
   var u=document.getElementById('lg_user').value.trim(), p=document.getElementById('lg_pass').value;
@@ -916,7 +1046,7 @@ async function doLogin(){
     var r=await sbRpc('app_login',{p_username:u,p_password:p}); r=Array.isArray(r)?r[0]:r;
     SESSION={token:r.token, username:r.username, role:r.role, display:r.display_name};
     try{ localStorage.setItem('blazupp_session', JSON.stringify(SESSION)); }catch(e){}
-    onAuthed();
+    await onAuthed();
   }catch(e){ err.textContent='Invalid username or password.'; console.error(e); }
   btn.disabled=false; btn.textContent='Sign in';
 }
@@ -924,7 +1054,7 @@ async function restoreSession(){
   var s=null; try{ s=JSON.parse(localStorage.getItem('blazupp_session')); }catch(e){}
   if(s&&s.token){
     try{ var r=await sbRpc('app_me',{p_token:s.token}); r=Array.isArray(r)?r[0]:r;
-      if(r&&r.username){ SESSION={token:s.token,username:r.username,role:r.role,display:r.display_name}; onAuthed(); return; } }catch(e){}
+      if(r&&r.username){ SESSION={token:s.token,username:r.username,role:r.role,display:r.display_name}; await onAuthed(); return; } }catch(e){}
   }
   showLogin();
 }
