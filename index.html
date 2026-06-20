@@ -749,7 +749,7 @@ async function splitCreate(){
   for(var i=0;i<n;i++){
     var inv={ id:uid(), number:'', status:base.status, date:base.date, due:base.due,
       name:ppl[i].name||('Member '+(i+1)), phone:ppl[i].phone||'', email:ppl[i].email||'',
-      bill:base.bill, classification:base.classification, buyerTin:'', buyerReg:'',
+      bill:base.bill, classification:base.classification, buyerTin:'', buyerReg:'', issuer:(SESSION&&SESSION.username)||'',
       items:[{item:pkg, desc:(base.bill||'')+' · share '+(i+1)+'/'+n, qty:'1', price:sh[i].toFixed(2)}],
       taxOn:false, taxRate:base.taxRate, discOn:false, disc:'0',
       annualOn:!!base.annualOn, annualPct:base.annualPct };
@@ -768,7 +768,7 @@ async function splitCreate(){
       try{ await tgSendText(tgSplitSummary(created, base)); }catch(e){ console.error(e); }
       for(var j=0;j<created.length;j++){
         toast('Sending PDF '+(j+1)+'/'+created.length+'…');
-        try{ var pdf=await makePdf(created[j]); await sendTelegram(pdf.output("blob"), fileName(created[j]), ''); sent++; }
+        try{ var pdf=await makePdf(created[j]); await sendTelegram(pdf.output("blob"), fileName(created[j]), ''); sent++; await tgSleep(350); }
         catch(e){ sfail++; console.error(e); }
       }
       toast('Telegram · 1 summary + '+sent+' PDFs'+(sfail?(' · '+sfail+' failed'):'')+' ✓');
@@ -848,7 +848,7 @@ function tgCaption(inv){ var t=totalsOf(inv); return (inv.number?('Invoice '+inv
 function tgSummary(inv){
   var t=totalsOf(inv);
   var items=(inv.items||[]).map(function(it){ return '• '+(it.item||it.desc||'Item')+' ×'+(it.qty||'1')+' — '+money(num(it.qty)*num(it.price)); }).join('\n');
-  var by=(SESSION&&(SESSION.display||SESSION.username))||inv.issuer||'—';
+  var by=inv.issuer||(SESSION&&(SESSION.display||SESSION.username))||'—';
   return [
     '🧾 Invoice '+(inv.number||'(draft)'),
     '—————————————',
@@ -865,13 +865,21 @@ function tgSummary(inv){
     'Date: '+fmtDate(inv.date)
   ].filter(Boolean).join('\n');
 }
+function tgSleep(ms){ return new Promise(function(r){ setTimeout(r,ms); }); }
+async function tgPost(method, fd){
+  for(var i=0;i<4;i++){
+    var res=await fetch('https://api.telegram.org/bot'+(SETTINGS.tgToken||'').trim()+'/'+method,{method:'POST',body:fd});
+    if(res.status===429){ var rj=await res.json().catch(function(){return {};}); var w=((rj.parameters&&rj.parameters.retry_after)||1); await tgSleep((w+0.5)*1000); continue; }
+    var j=await res.json().catch(function(){return {};});
+    if(!res.ok || !j.ok) throw new Error(j.description||('HTTP '+res.status));
+    return j;
+  }
+  throw new Error('Telegram rate-limited — try again');
+}
 async function tgSendText(text){
   if(!tgConfigured()) throw new Error('Telegram not configured');
   var fd=new FormData(); fd.append('chat_id',(SETTINGS.tgChat||'').trim()); fd.append('text',text);
-  var res=await fetch('https://api.telegram.org/bot'+(SETTINGS.tgToken||'').trim()+'/sendMessage',{method:'POST',body:fd});
-  var j=await res.json().catch(function(){return {};});
-  if(!res.ok || !j.ok) throw new Error(j.description||('HTTP '+res.status));
-  return true;
+  return await tgPost('sendMessage', fd);
 }
 function tgSplitSummary(list, base){
   var by=(SESSION&&(SESSION.display||SESSION.username))||'—';
@@ -900,10 +908,7 @@ async function sendTelegram(blob, filename, caption){
   fd.append('chat_id',(SETTINGS.tgChat||'').trim());
   if(caption) fd.append('caption',caption);
   fd.append('document', blob, filename);
-  var res=await fetch('https://api.telegram.org/bot'+(SETTINGS.tgToken||'').trim()+'/sendDocument',{method:'POST',body:fd});
-  var j=await res.json().catch(function(){return {};});
-  if(!res.ok || !j.ok) throw new Error(j.description||('HTTP '+res.status));
-  return true;
+  return await tgPost('sendDocument', fd);
 }
 async function tgTest(){
   var token=(document.getElementById('set_tgtoken').value||'').trim();
@@ -938,7 +943,7 @@ async function ensureIssuedSingle(inv){
   if((inv.number||'').trim()){ inv.remoteId=CUR_REMOTE; inv.synced=!!CUR_REMOTE; return inv; }
   if(sbReady()){
     toast('Recording invoice…');
-    try{ var r=await issueInvoiceRemote(inv); inv.number=r.number; inv.remoteId=r.id; inv.synced=true; CUR_REMOTE=r.id; document.getElementById('s_no').value=r.number; }
+    try{ var r=await issueInvoiceRemote(inv); inv.number=r.number; inv.remoteId=r.id; inv.synced=true; inv.issuer=(SESSION&&SESSION.username)||''; CUR_REMOTE=r.id; document.getElementById('s_no').value=r.number; }
     catch(e){ console.error(e); toast('⚠ Could not record to server — produced without a number'); }
   } else if(SETTINGS.nextNumber){
     inv.number=SETTINGS.nextNumber; document.getElementById('s_no').value=inv.number; SETTINGS.nextNumber=bumpNumber(SETTINGS.nextNumber,1); persist();
