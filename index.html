@@ -765,12 +765,13 @@ async function splitCreate(){
     if(!tgConfigured()){ toast('Telegram not set in ⚙ Settings — skipped sending'); }
     else{
       var sent=0, sfail=0;
+      try{ await tgSendText(tgSplitSummary(created, base)); }catch(e){ console.error(e); }
       for(var j=0;j<created.length;j++){
-        toast('Sending '+(j+1)+'/'+created.length+' to Telegram…');
-        try{ var pdf=await makePdf(created[j]); await tgSendInvoice(created[j], pdf.output("blob"), fileName(created[j])); sent++; }
+        toast('Sending PDF '+(j+1)+'/'+created.length+'…');
+        try{ var pdf=await makePdf(created[j]); await sendTelegram(pdf.output("blob"), fileName(created[j]), ''); sent++; }
         catch(e){ sfail++; console.error(e); }
       }
-      toast('Telegram · sent '+sent+(sfail?(' · '+sfail+' failed'):'')+' ✓');
+      toast('Telegram · 1 summary + '+sent+' PDFs'+(sfail?(' · '+sfail+' failed'):'')+' ✓');
     }
   }
   btn.disabled=false; btn.textContent='Create invoices';
@@ -871,6 +872,22 @@ async function tgSendText(text){
   var j=await res.json().catch(function(){return {};});
   if(!res.ok || !j.ok) throw new Error(j.description||('HTTP '+res.status));
   return true;
+}
+function tgSplitSummary(list, base){
+  var by=(SESSION&&(SESSION.display||SESSION.username))||'—';
+  var pkg=((base.items||[])[0]||{}).item || 'Team Package';
+  var lines=list.map(function(inv,i){ return (i+1)+'. '+(inv.number||'')+' · '+(inv.name||'')+' — '+money(totalsOf(inv).total); });
+  return [
+    '🧾 Split invoices — '+pkg,
+    '—————————————',
+    'Original total: '+money(totalsOf(base).total),
+    'Split equally into '+list.length+':',
+    lines.join('\n'),
+    '—————————————',
+    'Billing: '+(base.bill||'—'),
+    'Created by: '+by,
+    'Date: '+fmtDate(base.date)
+  ].filter(Boolean).join('\n');
 }
 async function tgSendInvoice(inv, blob, filename){
   await tgSendText(tgSummary(inv));   // 1) summary first
