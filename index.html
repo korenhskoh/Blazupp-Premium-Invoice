@@ -158,7 +158,9 @@
   .staff-row .rl.admin{color:var(--gold)} .staff-row .rl.staff{color:var(--blue)}
   .staff-row .st{font-size:12px} .staff-row .st.on{color:var(--green)} .staff-row .st.off{color:var(--danger)}
   .staff-row .ops{display:flex;gap:6px;justify-content:flex-end}
-  .audit-row{display:grid;grid-template-columns:140px 110px 1fr;gap:12px;font-size:12.5px;padding:9px 12px;border-bottom:1px solid var(--line)}
+  .audit-row{display:grid;grid-template-columns:148px 120px 124px 1fr;gap:12px;font-size:12.5px;padding:9px 12px;border-bottom:1px solid var(--line)}
+  .audit-row .who{color:var(--blue)}
+  .audit-head{font-weight:700;color:var(--ink-soft);font-size:11px;text-transform:uppercase;letter-spacing:.04em;border-bottom:2px solid var(--line)}
   .audit-row .when{color:var(--muted);white-space:nowrap}
   .audit-row .act{font-weight:600}
   @media(max-width:760px){
@@ -507,8 +509,8 @@
 <div class="modal-bg" id="splitModal">
   <div class="modal" style="max-width:560px">
     <h2>Split into individual invoices</h2>
-    <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 10px">Divides this invoice's total of <b id="sp_total">RM 0.00</b> equally and creates one invoice per person — each gets its own invoice number. Enter one person per line, optionally <i>Name, Phone</i>.</p>
-    <textarea id="sp_names" rows="6" placeholder="Ali bin Abu, 0123456789&#10;Siti Kassim&#10;Chong Wei&#10;…" style="width:100%;font-family:inherit;font-size:13px;border:1px solid var(--line);border-radius:8px;padding:10px" oninput="updateSplitPreview()"></textarea>
+    <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 10px">Divides this invoice's total of <b id="sp_total">RM 0.00</b> equally and creates one invoice per person — each gets its own invoice number. Enter one person per line, optionally <i>Name, Phone, Email</i>.</p>
+    <textarea id="sp_names" rows="6" placeholder="Ali bin Abu, 0123456789, ali@email.com&#10;Siti Kassim, 0198887777&#10;Chong Wei&#10;…" style="width:100%;font-family:inherit;font-size:13px;border:1px solid var(--line);border-radius:8px;padding:10px" oninput="updateSplitPreview()"></textarea>
     <div id="sp_preview" style="font-size:13px;margin:10px 0 0;min-height:20px"></div>
     <label class="inline-toggle" style="margin:10px 0 0"><input type="checkbox" id="sp_tg"> Send each invoice to Telegram after creating</label>
     <div class="actions" style="justify-content:flex-end;margin-top:12px">
@@ -720,7 +722,7 @@ function closeSplit(){ document.getElementById('splitModal').classList.remove('s
 function splitNames(){
   return document.getElementById('sp_names').value.split('\n')
     .map(function(l){ return l.trim(); }).filter(Boolean)
-    .map(function(l){ var c=l.split(','); return {name:(c[0]||'').trim(), phone:(c[1]||'').trim()}; });
+    .map(function(l){ var c=l.split(','); return {name:(c[0]||'').trim(), phone:(c[1]||'').trim(), email:(c[2]||'').trim()}; });
 }
 function splitShares(total,n){
   var per=Math.floor(total/n*100)/100, arr=[];
@@ -746,7 +748,7 @@ async function splitCreate(){
   var created=[], failed=0;
   for(var i=0;i<n;i++){
     var inv={ id:uid(), number:'', status:base.status, date:base.date, due:base.due,
-      name:ppl[i].name||('Member '+(i+1)), phone:ppl[i].phone||'', email:'',
+      name:ppl[i].name||('Member '+(i+1)), phone:ppl[i].phone||'', email:ppl[i].email||'',
       bill:base.bill, classification:base.classification, buyerTin:'', buyerReg:'',
       items:[{item:pkg, desc:(base.bill||'')+' · share '+(i+1)+'/'+n, qty:'1', price:sh[i].toFixed(2)}],
       taxOn:false, taxRate:base.taxRate, discOn:false, disc:'0',
@@ -765,7 +767,7 @@ async function splitCreate(){
       var sent=0, sfail=0;
       for(var j=0;j<created.length;j++){
         toast('Sending '+(j+1)+'/'+created.length+' to Telegram…');
-        try{ var pdf=await makePdf(created[j]); await sendTelegram(pdf.output('blob'), fileName(created[j]), tgCaption(created[j])); sent++; }
+        try{ var pdf=await makePdf(created[j]); await tgSendInvoice(created[j], pdf.output("blob"), fileName(created[j])); sent++; }
         catch(e){ sfail++; console.error(e); }
       }
       toast('Telegram · sent '+sent+(sfail?(' · '+sfail+' failed'):'')+' ✓');
@@ -842,6 +844,39 @@ function applyAnnualBounds(){
   var lab=document.getElementById('annLabel'); if(lab) lab.textContent='('+mn+'–'+mx+'%)';
 }
 function tgCaption(inv){ var t=totalsOf(inv); return (inv.number?('Invoice '+inv.number):'Invoice')+' — '+(inv.name||'')+'\n'+(inv.bill||'')+' · '+money(t.total)+' · '+(inv.status||''); }
+function tgSummary(inv){
+  var t=totalsOf(inv);
+  var items=(inv.items||[]).map(function(it){ return '• '+(it.item||it.desc||'Item')+' ×'+(it.qty||'1')+' — '+money(num(it.qty)*num(it.price)); }).join('\n');
+  var by=(SESSION&&(SESSION.display||SESSION.username))||inv.issuer||'—';
+  return [
+    '🧾 Invoice '+(inv.number||'(draft)'),
+    '—————————————',
+    'Customer: '+(inv.name||'—'),
+    (inv.phone?('Phone: '+inv.phone):''),
+    (inv.email?('Email: '+inv.email):''),
+    'Billing: '+(inv.bill||'—'),
+    (items?('Details:\n'+items):''),
+    'Total: '+money(t.total),
+    (inv.annualOn?('Annual maintenance: '+num(inv.annualPct)+'% ('+money(t.annual)+'/yr)'):''),
+    'Status: '+(inv.status||'—'),
+    '—————————————',
+    'Created by: '+by,
+    'Date: '+fmtDate(inv.date)
+  ].filter(Boolean).join('\n');
+}
+async function tgSendText(text){
+  if(!tgConfigured()) throw new Error('Telegram not configured');
+  var fd=new FormData(); fd.append('chat_id',(SETTINGS.tgChat||'').trim()); fd.append('text',text);
+  var res=await fetch('https://api.telegram.org/bot'+(SETTINGS.tgToken||'').trim()+'/sendMessage',{method:'POST',body:fd});
+  var j=await res.json().catch(function(){return {};});
+  if(!res.ok || !j.ok) throw new Error(j.description||('HTTP '+res.status));
+  return true;
+}
+async function tgSendInvoice(inv, blob, filename){
+  await tgSendText(tgSummary(inv));   // 1) summary first
+  await sendTelegram(blob, filename, ''); // 2) then the PDF report
+  return true;
+}
 async function sendTelegram(blob, filename, caption){
   if(!tgConfigured()) throw new Error('Telegram not configured');
   var fd=new FormData();
@@ -903,7 +938,7 @@ async function downloadSingle(){
     pdf.save(name);
     if(SETTINGS.tgAuto && tgConfigured()){
       toast('Sending to Telegram…');
-      try{ await sendTelegram(pdf.output('blob'), name, tgCaption(inv)); toast('Recorded · downloaded · sent to Telegram ✓'); }
+      try{ await tgSendInvoice(inv, pdf.output("blob"), name); toast('Recorded · downloaded · sent to Telegram ✓'); }
       catch(e){ toast('Downloaded · Telegram failed: '+e.message); console.error(e); }
     } else { toast('Recorded & downloaded · '+(inv.number||'')); }
   }
@@ -922,7 +957,7 @@ async function sendSingleTelegram(){
   if(!tgConfigured()){ toast('Set Telegram bot token & chat ID in ⚙ Settings'); return; }
   inv=await ensureIssuedSingle(inv);
   toast('Building & sending…');
-  try{ var pdf=await makePdf(inv); await sendTelegram(pdf.output('blob'), fileName(inv), tgCaption(inv)); toast('Recorded & sent to Telegram ✓ · '+(inv.number||'')); }
+  try{ var pdf=await makePdf(inv); await tgSendInvoice(inv, pdf.output("blob"), fileName(inv)); toast('Recorded & sent to Telegram ✓ · '+(inv.number||'')); }
   catch(e){ toast('Telegram failed: '+e.message); console.error(e); }
 }
 
@@ -992,7 +1027,7 @@ function cycleStatus(id){ var inv=BATCH.find(function(x){return x.id===id;}); if
 function removeOne(id){ BATCH=BATCH.filter(function(x){return x.id!==id;}); persist(); renderBatch(); }
 async function previewOne(id){ var inv=BATCH.find(function(x){return x.id===id;}); if(!inv)return; toast('Building PDF…'); try{ var pdf=await makePdf(inv); pdf.save(fileName(inv)); }catch(e){ toast('PDF failed'); console.error(e);} }
 async function viewOne(id){ var inv=BATCH.find(function(x){return x.id===id;}); if(!inv)return; toast('Building PDF…'); try{ var pdf=await makePdf(inv); openPdfBlob(pdf.output('blob')); }catch(e){ toast('PDF failed'); console.error(e);} }
-async function sendOne(id){ var inv=BATCH.find(function(x){return x.id===id;}); if(!inv)return; if(!tgConfigured()){ toast('Set Telegram in ⚙ Settings'); return; } toast('Sending to Telegram…'); try{ var pdf=await makePdf(inv); await sendTelegram(pdf.output('blob'), fileName(inv), tgCaption(inv)); toast('Sent to Telegram ✓'); }catch(e){ toast('Telegram failed: '+e.message); console.error(e);} }
+async function sendOne(id){ var inv=BATCH.find(function(x){return x.id===id;}); if(!inv)return; if(!tgConfigured()){ toast('Set Telegram in ⚙ Settings'); return; } toast('Sending to Telegram…'); try{ var pdf=await makePdf(inv); await tgSendInvoice(inv, pdf.output("blob"), fileName(inv)); toast('Sent to Telegram ✓'); }catch(e){ toast('Telegram failed: '+e.message); console.error(e);} }
 function editOne(id){ var inv=BATCH.find(function(x){return x.id===id;}); if(!inv)return;
   document.getElementById('s_no').value=inv.number; document.getElementById('s_status').value=inv.status;
   document.getElementById('s_date').value=inv.date; document.getElementById('s_due').value=inv.due;
@@ -1279,10 +1314,11 @@ async function loadAudit(){
   try{
     var rows=await sbRpc('app_list_audit',{p_token:SESSION.token});
     if(!rows||!rows.length){ host.innerHTML='<div class="empty">No activity yet.</div>'; return; }
-    host.innerHTML=rows.map(function(r){
-      var d=r.detail?(' · '+esc(JSON.stringify(r.detail).replace(/[{}"]/g,'').slice(0,80))):'';
+    host.innerHTML='<div class="audit-row audit-head"><span>Time</span><span>Staff</span><span>Action</span><span>Detail</span></div>'+rows.map(function(r){
+      var d=r.detail?esc(JSON.stringify(r.detail).replace(/[{}"]/g,'').slice(0,90)):'';
       return '<div class="audit-row"><span class="when">'+esc(String(r.ts||'').replace('T',' ').slice(0,16))+'</span>'
-        +'<span class="act">'+esc(r.action)+'</span><span>'+esc(r.actor||'')+d+'</span></div>';
+        +'<span class="who"><b>'+esc(r.actor||'—')+'</b></span>'
+        +'<span class="act">'+esc(r.action)+'</span><span class="dt">'+d+'</span></div>';
     }).join('');
   }catch(e){ host.innerHTML='<div class="empty">Only admins can view the audit log.</div>'; console.error(e); }
 }
