@@ -55,6 +55,8 @@
 
   /* ---------------- Single editor ---------------- */
   .single{display:grid;grid-template-columns:380px 1fr;gap:22px;align-items:start}
+  .single.hidePrev{grid-template-columns:1fr}
+  .single.hidePrev .preview-pane{display:none}
   .card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:18px}
   .card h2{font-family:'Plus Jakarta Sans',sans-serif;font-size:13px;font-weight:700;margin:0 0 14px;
     text-transform:uppercase;letter-spacing:.05em;color:var(--ink-soft)}
@@ -282,7 +284,7 @@
   <div class="panel active" id="panel-single">
     <div class="single">
       <div class="card">
-        <h2>Invoice details</h2>
+        <h2 style="display:flex;justify-content:space-between;align-items:center;gap:10px">Invoice details <button class="btn btn-ghost btn-sm" type="button" id="prevToggle" onclick="togglePreview()">Hide preview</button></h2>
         <div class="row2">
           <div class="field"><label>Invoice No.</label><input id="s_no"></div>
           <div class="field"><label>Status</label>
@@ -318,12 +320,14 @@
 
         <div class="inline-toggle"><input type="checkbox" id="s_taxOn"> Apply SST <input type="number" id="s_taxRate" value="8" min="0" step="0.5"> %</div>
         <div class="inline-toggle"><input type="checkbox" id="s_discOn"> Discount <input type="number" id="s_disc" value="0" min="0" step="0.01"></div>
+        <div class="inline-toggle"><input type="checkbox" id="s_annOn"> Annual maintenance <span id="annLabel" style="color:var(--ink-soft);font-size:11px">(2–5%)</span> <input type="number" id="s_annPct" value="3" min="2" max="5" step="0.5"> % / yr</div>
 
         <div class="actions">
           <button class="btn btn-gold" onclick="downloadSingle()">⬇ Download PDF</button>
           <button class="btn btn-blue" onclick="viewSingle()">👁 View</button>
           <button class="btn btn-ghost" onclick="sendSingleTelegram()">✈ Telegram</button>
           <button class="btn btn-blue" onclick="saveToBatch()">Save to Batch</button>
+          <button class="btn btn-ghost" onclick="openSplit()">✂ Split</button>
           <button class="btn btn-ghost" onclick="newSingle()">New</button>
         </div>
       </div>
@@ -464,6 +468,13 @@
     </div>
     <div class="field"><label>Thank-you / payment note</label><textarea id="set_thanks" rows="2"></textarea></div>
     <div class="field"><label>PDF file name format <small style="color:var(--ink-soft)">placeholders: {name} {bill} {date} {number} {status} {total} {phone} {company} · ".pdf" added automatically</small></label><input id="set_filetpl" placeholder="{name}_{bill}_{date}_Blazupp_invoice"></div>
+    <div class="field"><label>Annual maintenance % — optional yearly charge <small style="color:var(--ink-soft)">sets the allowed range &amp; default on the invoice editor</small></label>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        <div><div style="font-size:11px;color:var(--ink-soft);margin-bottom:3px">Min %</div><input id="set_annmin" type="number" min="0" max="100" step="0.5" placeholder="2"></div>
+        <div><div style="font-size:11px;color:var(--ink-soft);margin-bottom:3px">Default %</div><input id="set_annpct" type="number" min="0" max="100" step="0.5" placeholder="3"></div>
+        <div><div style="font-size:11px;color:var(--ink-soft);margin-bottom:3px">Max %</div><input id="set_annmax" type="number" min="0" max="100" step="0.5" placeholder="5"></div>
+      </div>
+    </div>
     <h2 style="font-family:'Plus Jakarta Sans';font-size:14px;margin:18px 0 6px">Telegram delivery</h2>
     <p style="font-size:12px;color:var(--ink-soft);margin:0 0 10px">Send invoice PDFs to a Telegram chat/group via your bot. Get a token from <b>@BotFather</b>; get the chat ID from <b>@userinfobot</b> (personal) or add your bot to a group and read it via getUpdates.</p>
     <div class="field"><label>Bot token</label><input id="set_tgtoken" placeholder="123456789:ABCdef..." autocomplete="off" autocapitalize="none"></div>
@@ -471,6 +482,7 @@
       <div class="field"><label>Chat ID</label><input id="set_tgchat" placeholder="e.g. 812345678 or -1001234567890"></div>
       <div class="field"><label>&nbsp;</label><label class="inline-toggle" style="margin:0;padding:9px 0"><input type="checkbox" id="set_tgauto"> Auto-send on Download PDF</label></div>
     </div>
+    <div style="margin:2px 0 4px"><button class="btn btn-ghost btn-sm" type="button" onclick="tgTest()">Send test message</button> <small style="color:var(--ink-soft)">checks the token + chat ID instantly</small></div>
     <div class="actions" style="justify-content:flex-end">
       <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
       <button class="btn btn-gold" onclick="saveSettings()">Save settings</button>
@@ -487,6 +499,20 @@
     <div class="actions" style="justify-content:flex-end;margin-top:12px">
       <button class="btn btn-ghost" onclick="closePaste()">Cancel</button>
       <button class="btn btn-gold" onclick="applyPaste()">Add rows</button>
+    </div>
+  </div>
+</div>
+
+<!-- split modal -->
+<div class="modal-bg" id="splitModal">
+  <div class="modal" style="max-width:560px">
+    <h2>Split into individual invoices</h2>
+    <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 10px">Divides this invoice's total of <b id="sp_total">RM 0.00</b> equally and creates one invoice per person — each gets its own invoice number. Enter one person per line, optionally <i>Name, Phone</i>.</p>
+    <textarea id="sp_names" rows="6" placeholder="Ali bin Abu, 0123456789&#10;Siti Kassim&#10;Chong Wei&#10;…" style="width:100%;font-family:inherit;font-size:13px;border:1px solid var(--line);border-radius:8px;padding:10px" oninput="updateSplitPreview()"></textarea>
+    <div id="sp_preview" style="font-size:13px;margin:10px 0 0;min-height:20px"></div>
+    <div class="actions" style="justify-content:flex-end;margin-top:12px">
+      <button class="btn btn-ghost" onclick="closeSplit()">Cancel</button>
+      <button class="btn btn-gold" id="sp_go" onclick="splitCreate()">Create invoices</button>
     </div>
   </div>
 </div>
@@ -528,6 +554,7 @@ var SETTINGS = {
   sellerTin:'', sellerBrn:'', sellerSst:'', msic:'', classification:'',   // e-Invoice (LHDN/MyInvois) identity
   tgToken:'', tgChat:'', tgAuto:false,   // Telegram bot delivery
   fileTpl:'{name}_{bill}_{date}_Blazupp_invoice',
+  annualPct:3, annualMin:2, annualMax:5,
   sbUrl:'', sbKey:''
 };
 var SESSION = null;   // {token, username, role, display} once logged in
@@ -575,7 +602,8 @@ function totalsOf(inv){
   var disc=inv.discOn? num(inv.disc):0;
   var afterDisc=Math.max(0,sub-disc);
   var tax=inv.taxOn? afterDisc*num(inv.taxRate)/100 : 0;
-  return {sub:sub,disc:disc,tax:tax,total:afterDisc+tax};
+  var annual=inv.annualOn? Math.round(afterDisc*num(inv.annualPct))/100 : 0;
+  return {sub:sub,disc:disc,tax:tax,total:afterDisc+tax,annual:annual};
 }
 
 /* ---------- invoice renderer (used by preview + PDF) ---------- */
@@ -613,7 +641,9 @@ function renderInvoiceHTML(inv){
       +'<tbody>'+rows+'</tbody></table>'
     +'<div class="foot"><div class="totals"><div class="tr"><span>Subtotal</span><span class="v">'+money(t.sub)+'</span></div>'
       +discRow+'<div class="tr"><span>'+taxLbl+'</span><span class="v">'+money(t.tax)+'</span></div>'
-      +'<div class="grand"><span class="l">Total Due</span><span class="a">'+money(t.total)+'</span></div></div></div>'
+      +'<div class="grand"><span class="l">Total Due</span><span class="a">'+money(t.total)+'</span></div>'
+      +(inv.annualOn?'<div class="tr" style="margin-top:8px;padding-top:8px;border-top:1px dashed #e5e7eb;font-size:11.5px;color:#6b7280"><span>Optional annual maintenance ('+num(inv.annualPct)+'%) · billed yearly</span><span class="v">'+money(t.annual)+' / yr</span></div>':'')
+      +'</div></div>'
     +'<div class="pay"><h4>Payment Instructions</h4><div class="pay-grid">'
       +'<div class="pf"><span class="k">Bank Name: </span><span class="val">'+esc(SETTINGS.bankName)+'</span></div>'
       +'<div class="pf"><span class="k">Account Name: </span><span class="val">'+esc(SETTINGS.accName)+'</span></div>'
@@ -639,7 +669,8 @@ function readSingle(){
     bill:document.getElementById('s_bill').value, items:items,
     buyerTin:document.getElementById('s_btin').value, buyerReg:document.getElementById('s_breg').value, classification:document.getElementById('s_class').value,
     taxOn:document.getElementById('s_taxOn').checked, taxRate:document.getElementById('s_taxRate').value,
-    discOn:document.getElementById('s_discOn').checked, disc:document.getElementById('s_disc').value
+    discOn:document.getElementById('s_discOn').checked, disc:document.getElementById('s_disc').value,
+    annualOn:document.getElementById('s_annOn').checked, annualPct:document.getElementById('s_annPct').value
   };
 }
 function refreshPreview(){ document.getElementById('s_preview').innerHTML=renderInvoiceHTML(readSingle()); }
@@ -667,8 +698,63 @@ function newSingle(){
   document.getElementById('s_class').value=SETTINGS.classification||'';
   document.getElementById('s_taxOn').checked=false; document.getElementById('s_taxRate').value='8';
   document.getElementById('s_discOn').checked=false; document.getElementById('s_disc').value='0';
+  document.getElementById('s_annOn').checked=false; document.getElementById('s_annPct').value=SETTINGS.annualPct||3; applyAnnualBounds();
   document.getElementById('s_items').innerHTML=''; itemAdd('','Lifetime',1,0);
   refreshPreview();
+}
+/* ---------- Split one invoice into equal individual invoices ---------- */
+var SPLIT_BASE=null;
+function openSplit(){
+  var inv=readSingle(); var t=totalsOf(inv);
+  if(t.total<=0){ toast('Add the package and amount first'); return; }
+  SPLIT_BASE=inv;
+  document.getElementById('sp_total').textContent=money(t.total);
+  document.getElementById('sp_names').value=(inv.name?inv.name:'');
+  document.getElementById('splitModal').classList.add('show');
+  updateSplitPreview();
+}
+function closeSplit(){ document.getElementById('splitModal').classList.remove('show'); }
+function splitNames(){
+  return document.getElementById('sp_names').value.split('\n')
+    .map(function(l){ return l.trim(); }).filter(Boolean)
+    .map(function(l){ var c=l.split(','); return {name:(c[0]||'').trim(), phone:(c[1]||'').trim()}; });
+}
+function splitShares(total,n){
+  var per=Math.floor(total/n*100)/100, arr=[];
+  for(var i=0;i<n-1;i++) arr.push(per);
+  arr.push(Math.round((total-per*(n-1))*100)/100);
+  return arr;
+}
+function updateSplitPreview(){
+  if(!SPLIT_BASE) return;
+  var t=totalsOf(SPLIT_BASE).total, ppl=splitNames(), n=ppl.length, el=document.getElementById('sp_preview');
+  if(n<2){ el.innerHTML='<span style="color:var(--ink-soft)">Enter at least 2 people…</span>'; return; }
+  var sh=splitShares(t,n);
+  el.innerHTML='<b>'+n+'</b> invoices · '+money(sh[0])+' each'+(sh[n-1]!==sh[0]?(' (last '+money(sh[n-1])+')'):'')+' · adds up to <b>'+money(t)+'</b>';
+}
+async function splitCreate(){
+  if(!SPLIT_BASE) return;
+  var base=SPLIT_BASE, t=totalsOf(base).total, ppl=splitNames(), n=ppl.length;
+  if(n<2){ toast('Enter at least 2 people'); return; }
+  var sh=splitShares(t,n);
+  var pkg=((base.items||[])[0]||{}).item || 'Team Package';
+  var btn=document.getElementById('sp_go'); btn.disabled=true; btn.textContent='Creating…';
+  var made=0, failed=0;
+  for(var i=0;i<n;i++){
+    var inv={ id:uid(), number:'', status:base.status, date:base.date, due:base.due,
+      name:ppl[i].name||('Member '+(i+1)), phone:ppl[i].phone||'', email:'',
+      bill:base.bill, classification:base.classification, buyerTin:'', buyerReg:'',
+      items:[{item:pkg, desc:(base.bill||'')+' · share '+(i+1)+'/'+n, qty:'1', price:sh[i].toFixed(2)}],
+      taxOn:false, taxRate:base.taxRate, discOn:false, disc:'0',
+      annualOn:!!base.annualOn, annualPct:base.annualPct };
+    if(sbReady()){
+      try{ var r=await issueInvoiceRemote(inv); inv.number=r.number; inv.remoteId=r.id; inv.synced=true; }
+      catch(e){ failed++; inv.synced=false; console.error(e); }
+    } else { inv.synced=false; inv.number=SETTINGS.nextNumber; SETTINGS.nextNumber=bumpNumber(SETTINGS.nextNumber,1); }
+    BATCH.push(inv); made++;
+  }
+  persist(); renderBatch(); btn.disabled=false; btn.textContent='Create invoices'; closeSplit(); switchTab('batch');
+  toast(made+' split invoices created'+(failed?(' · '+failed+' not issued'):''));
 }
 async function saveToBatch(){
   var inv=readSingle();
@@ -716,8 +802,8 @@ function fileName(inv){
     currency: safeName(SETTINGS.currency)||'', phone: safeName(inv.phone)||''
   };
   var tpl=(SETTINGS.fileTpl&&SETTINGS.fileTpl.trim())||'{name}_{bill}_{date}_Blazupp_invoice';
-  var out=tpl.replace(/\{(\w+)\}/g,function(m,k){ k=k.toLowerCase(); return (k in map)? map[k] : m; });
-  out=safeName(out).trim();
+  var out=tpl.replace(/\{(\w+)\}/g,function(m,k){ k=k.toLowerCase(); return Object.prototype.hasOwnProperty.call(map,k)? map[k] : m; });
+  out=safeName(out).replace(/\s*_\s*/g,'_').replace(/_{2,}/g,'_').replace(/^[_\-]+|[_\-]+$/g,'').trim();
   if(!out) out='invoice';
   if(!/\.pdf$/i.test(out)) out+='.pdf';
   return out;
@@ -725,6 +811,25 @@ function fileName(inv){
 
 /* ---------- Telegram delivery ---------- */
 function tgConfigured(){ return !!((SETTINGS.tgToken||'').trim() && (SETTINGS.tgChat||'').trim()); }
+function togglePreview(){
+  var s=document.querySelector('#panel-single .single');
+  var hidden=s.classList.toggle('hidePrev');
+  var b=document.getElementById('prevToggle'); if(b) b.textContent=hidden?'Show preview':'Hide preview';
+  try{ localStorage.setItem('blz_hidePrev', hidden?'1':'0'); }catch(e){}
+}
+function restorePreviewPref(){
+  if(localStorage.getItem('blz_hidePrev')==='1'){
+    var s=document.querySelector('#panel-single .single'); if(s) s.classList.add('hidePrev');
+    var b=document.getElementById('prevToggle'); if(b) b.textContent='Show preview';
+  }
+}
+function applyAnnualBounds(){
+  var el=document.getElementById('s_annPct'); if(!el) return;
+  var mn=(SETTINGS.annualMin!=null?num(SETTINGS.annualMin):2), mx=(SETTINGS.annualMax!=null?num(SETTINGS.annualMax):5);
+  el.min=mn; el.max=mx;
+  var v=num(el.value); if(v<mn) el.value=mn; if(v>mx) el.value=mx;
+  var lab=document.getElementById('annLabel'); if(lab) lab.textContent='('+mn+'–'+mx+'%)';
+}
 function tgCaption(inv){ var t=totalsOf(inv); return (inv.number?('Invoice '+inv.number):'Invoice')+' — '+(inv.name||'')+'\n'+(inv.bill||'')+' · '+money(t.total)+' · '+(inv.status||''); }
 async function sendTelegram(blob, filename, caption){
   if(!tgConfigured()) throw new Error('Telegram not configured');
@@ -736,6 +841,21 @@ async function sendTelegram(blob, filename, caption){
   var j=await res.json().catch(function(){return {};});
   if(!res.ok || !j.ok) throw new Error(j.description||('HTTP '+res.status));
   return true;
+}
+async function tgTest(){
+  var token=(document.getElementById('set_tgtoken').value||'').trim();
+  var chat=(document.getElementById('set_tgchat').value||'').trim();
+  if(!token||!chat){ alert('Enter the bot token AND chat ID first, then tap “Send test message”.'); return; }
+  toast('Sending test message…');
+  try{
+    var fd=new FormData(); fd.append('chat_id',chat); fd.append('text','✅ Blazupp Invoice Studio — Telegram is connected.');
+    var res=await fetch('https://api.telegram.org/bot'+token+'/sendMessage',{method:'POST',body:fd});
+    var j=await res.json().catch(function(){return {};});
+    if(j&&j.ok){ alert('✓ Success! A test message was just sent. Check your Telegram chat.'); }
+    else{ alert('Telegram refused the message:\n\n"'+((j&&j.description)||('HTTP '+res.status))+'"\n\nMost common fixes:\n1) Open your bot in Telegram and press START — or, for a group, add the bot to the group.\n2) The Chat ID must be the NUMERIC id (group ids start with -100), not the @username.\n3) Re-copy the token from @BotFather (no spaces or line breaks).'); }
+  }catch(e){
+    alert('Could not reach Telegram ("'+e.message+'").\n\nIf this says "Failed to fetch", your browser or network blocked the direct call to Telegram. Tell me and I will route sending through a Supabase Edge Function so it works server-side.');
+  }
 }
 function openPdfBlob(blob){
   var url=URL.createObjectURL(blob);
@@ -855,6 +975,7 @@ function editOne(id){ var inv=BATCH.find(function(x){return x.id===id;}); if(!in
   document.getElementById('s_btin').value=inv.buyerTin||''; document.getElementById('s_breg').value=inv.buyerReg||''; document.getElementById('s_class').value=inv.classification||'';
   document.getElementById('s_bill').value=inv.bill; document.getElementById('s_taxOn').checked=inv.taxOn; document.getElementById('s_taxRate').value=inv.taxRate;
   document.getElementById('s_discOn').checked=inv.discOn; document.getElementById('s_disc').value=inv.disc;
+  document.getElementById('s_annOn').checked=!!inv.annualOn; document.getElementById('s_annPct').value=inv.annualPct||SETTINGS.annualPct||3;
   document.getElementById('s_items').innerHTML=''; (inv.items||[]).forEach(function(it){itemAdd(it.item,it.desc,it.qty,it.price);});
   BATCH=BATCH.filter(function(x){return x.id!==id;}); persist(); renderBatch();
   switchTab('single'); refreshPreview(); toast('Loaded into editor — re-save when done');
@@ -984,6 +1105,9 @@ function openSettings(){
   document.getElementById('set_tgchat').value=SETTINGS.tgChat||'';
   document.getElementById('set_tgauto').checked=!!SETTINGS.tgAuto;
   document.getElementById('set_filetpl').value=SETTINGS.fileTpl||'';
+  document.getElementById('set_annpct').value=SETTINGS.annualPct||3;
+  document.getElementById('set_annmin').value=(SETTINGS.annualMin!=null?SETTINGS.annualMin:2);
+  document.getElementById('set_annmax').value=(SETTINGS.annualMax!=null?SETTINGS.annualMax:5);
   document.getElementById('settingsModal').classList.add('show');
 }
 function closeSettings(){ document.getElementById('settingsModal').classList.remove('show'); }
@@ -1000,6 +1124,10 @@ function saveSettings(){
   SETTINGS.tgChat=document.getElementById('set_tgchat').value.trim();
   SETTINGS.tgAuto=document.getElementById('set_tgauto').checked;
   SETTINGS.fileTpl=document.getElementById('set_filetpl').value.trim();
+  SETTINGS.annualPct=num(document.getElementById('set_annpct').value)||3;
+  SETTINGS.annualMin=num(document.getElementById('set_annmin').value);
+  SETTINGS.annualMax=num(document.getElementById('set_annmax').value)||5;
+  applyAnnualBounds();
   persist(); closeSettings(); refreshPreview(); renderBatch(); newSingle();
   pushCentralSettings(); toast('Settings saved');
 }
@@ -1040,11 +1168,11 @@ async function onAuthed(){
   await loadCentralSettings();
   switchTab('single');
 }
-var CENTRAL_KEYS=['company','tagline','bankName','accName','accNo','swift','currency','thanks','sellerTin','sellerBrn','sellerSst','msic','classification','tgToken','tgChat','tgAuto','fileTpl'];
+var CENTRAL_KEYS=['company','tagline','bankName','accName','accNo','swift','currency','thanks','sellerTin','sellerBrn','sellerSst','msic','classification','tgToken','tgChat','tgAuto','fileTpl','annualPct','annualMin','annualMax'];
 async function loadCentralSettings(){
   try{
     var d=await sbRpc('get_settings',{p_token:SESSION.token});
-    if(d&&typeof d==='object'){ CENTRAL_KEYS.forEach(function(k){ if(d[k]!=null&&d[k]!=='') SETTINGS[k]=d[k]; }); persist(); refreshPreview(); renderBatch(); newSingle(); }
+    if(d&&typeof d==='object'){ CENTRAL_KEYS.forEach(function(k){ if(d[k]!=null&&d[k]!=='') SETTINGS[k]=d[k]; }); persist(); applyAnnualBounds(); refreshPreview(); renderBatch(); newSingle(); }
   }catch(e){ console.error('settings load',e); }
 }
 async function pushCentralSettings(){
@@ -1144,6 +1272,7 @@ async function loadAudit(){
   });
   document.getElementById('s_items').addEventListener('input',refreshPreview);
   document.getElementById('lg_pass').addEventListener('keydown',function(e){ if(e.key==='Enter') doLogin(); });
+  restorePreviewPref(); applyAnnualBounds();
   newSingle();
   bulkAddRow(); bulkAddRow(); bulkAddRow();
   renderBatch();
