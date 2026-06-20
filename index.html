@@ -540,7 +540,8 @@ async function sbRpc(fn,params){
     headers:{'Content-Type':'application/json','apikey':sbAnon(),'Authorization':'Bearer '+sbAnon()},
     body:JSON.stringify(params||{})});
   if(!res.ok) throw new Error('Supabase '+res.status+' '+(await res.text()));
-  return await res.json();
+  var txt=await res.text();
+  return txt ? JSON.parse(txt) : null;
 }
 async function issueInvoiceRemote(inv){
   var t=totalsOf(inv);
