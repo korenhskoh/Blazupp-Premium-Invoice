@@ -463,6 +463,7 @@
       <div class="field"><label>Next invoice no.</label><input id="set_next"></div>
     </div>
     <div class="field"><label>Thank-you / payment note</label><textarea id="set_thanks" rows="2"></textarea></div>
+    <div class="field"><label>PDF file name format <small style="color:var(--ink-soft)">placeholders: {name} {bill} {date} {number} {status} {total} {phone} {company} · ".pdf" added automatically</small></label><input id="set_filetpl" placeholder="{name}_{bill}_{date}_Blazupp_invoice"></div>
     <h2 style="font-family:'Plus Jakarta Sans';font-size:14px;margin:18px 0 6px">Telegram delivery</h2>
     <p style="font-size:12px;color:var(--ink-soft);margin:0 0 10px">Send invoice PDFs to a Telegram chat/group via your bot. Get a token from <b>@BotFather</b>; get the chat ID from <b>@userinfobot</b> (personal) or add your bot to a group and read it via getUpdates.</p>
     <div class="field"><label>Bot token</label><input id="set_tgtoken" placeholder="123456789:ABCdef..." autocomplete="off" autocapitalize="none"></div>
@@ -525,6 +526,7 @@ var SETTINGS = {
   thanks:'Please make payment by the due date via bank transfer to the account above. Thank you for your business! For any questions, contact us at +60 11-2309 9692.',
   sellerTin:'', sellerBrn:'', sellerSst:'', msic:'', classification:'',   // e-Invoice (LHDN/MyInvois) identity
   tgToken:'', tgChat:'', tgAuto:false,   // Telegram bot delivery
+  fileTpl:'{name}_{bill}_{date}_Blazupp_invoice',
   sbUrl:'', sbKey:''
 };
 var SESSION = null;   // {token, username, role, display} once logged in
@@ -702,9 +704,21 @@ function addCanvasToPdf(pdf,canvas){
 function safeName(s){ return String(s||'').replace(/[\/\\:*?"<>|]+/g,'').replace(/\s+/g,' ').trim(); }
 function fileDate(iso){ if(!iso) iso=todayISO(); var p=iso.split('-'); return p.length===3? p[2]+'-'+p[1]+'-'+p[0] : iso; }
 function fileName(inv){
-  var name=safeName(inv.name)||'Customer';
-  var bill=safeName(inv.bill)||'Invoice';
-  return name+'_'+bill+'_'+fileDate(inv.date)+'_Blazupp_invoice.pdf';
+  var t=totalsOf(inv);
+  var map={
+    name: safeName(inv.name)||'Customer', customer: safeName(inv.name)||'Customer',
+    company: safeName(SETTINGS.company)||'Blazupp',
+    bill: safeName(inv.bill)||'Invoice', type: safeName(inv.bill)||'Invoice',
+    date: fileDate(inv.date), number: safeName(inv.number)||'', no: safeName(inv.number)||'',
+    status: safeName(inv.status)||'', total: Number(t.total||0).toFixed(2),
+    currency: safeName(SETTINGS.currency)||'', phone: safeName(inv.phone)||''
+  };
+  var tpl=(SETTINGS.fileTpl&&SETTINGS.fileTpl.trim())||'{name}_{bill}_{date}_Blazupp_invoice';
+  var out=tpl.replace(/\{(\w+)\}/g,function(m,k){ k=k.toLowerCase(); return (k in map)? map[k] : m; });
+  out=safeName(out).trim();
+  if(!out) out='invoice';
+  if(!/\.pdf$/i.test(out)) out+='.pdf';
+  return out;
 }
 
 /* ---------- Telegram delivery ---------- */
@@ -967,6 +981,7 @@ function openSettings(){
   document.getElementById('set_tgtoken').value=SETTINGS.tgToken||'';
   document.getElementById('set_tgchat').value=SETTINGS.tgChat||'';
   document.getElementById('set_tgauto').checked=!!SETTINGS.tgAuto;
+  document.getElementById('set_filetpl').value=SETTINGS.fileTpl||'';
   document.getElementById('settingsModal').classList.add('show');
 }
 function closeSettings(){ document.getElementById('settingsModal').classList.remove('show'); }
@@ -982,6 +997,7 @@ function saveSettings(){
   SETTINGS.tgToken=document.getElementById('set_tgtoken').value.trim();
   SETTINGS.tgChat=document.getElementById('set_tgchat').value.trim();
   SETTINGS.tgAuto=document.getElementById('set_tgauto').checked;
+  SETTINGS.fileTpl=document.getElementById('set_filetpl').value.trim();
   persist(); closeSettings(); refreshPreview(); renderBatch(); newSingle();
   pushCentralSettings(); toast('Settings saved');
 }
@@ -1022,7 +1038,7 @@ async function onAuthed(){
   await loadCentralSettings();
   switchTab('single');
 }
-var CENTRAL_KEYS=['company','tagline','bankName','accName','accNo','swift','currency','thanks','sellerTin','sellerBrn','sellerSst','msic','classification','tgToken','tgChat','tgAuto'];
+var CENTRAL_KEYS=['company','tagline','bankName','accName','accNo','swift','currency','thanks','sellerTin','sellerBrn','sellerSst','msic','classification','tgToken','tgChat','tgAuto','fileTpl'];
 async function loadCentralSettings(){
   try{
     var d=await sbRpc('get_settings',{p_token:SESSION.token});
