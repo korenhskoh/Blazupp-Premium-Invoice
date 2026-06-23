@@ -54,6 +54,7 @@
   .btn[disabled]{opacity:.5;cursor:not-allowed}
 
   /* ---------------- Single editor ---------------- */
+  #s_no[readonly]{background:#f1f5f9;color:#64748b;cursor:not-allowed}
   .single{display:grid;grid-template-columns:380px 1fr;gap:22px;align-items:start}
   .single.hidePrev{grid-template-columns:1fr}
   .single.hidePrev .preview-pane{display:none}
@@ -288,7 +289,7 @@
       <div class="card">
         <h2 style="display:flex;justify-content:space-between;align-items:center;gap:10px">Invoice details <button class="btn btn-ghost btn-sm" type="button" id="prevToggle" onclick="togglePreview()">Hide preview</button></h2>
         <div class="row2">
-          <div class="field"><label>Invoice No.</label><input id="s_no"></div>
+          <div class="field"><label>Invoice No. <small style="color:var(--ink-soft)">· automatic</small></label><input id="s_no" readonly></div>
           <div class="field"><label>Status</label>
             <select id="s_status"><option>Unpaid</option><option>Paid</option><option>Overdue</option></select></div>
         </div>
@@ -520,6 +521,18 @@
   </div>
 </div>
 
+<!-- new-invoice prompt -->
+<div class="modal-bg" id="newPromptModal">
+  <div class="modal" style="max-width:420px;text-align:center">
+    <h2 style="margin-bottom:6px">Invoice done ✓</h2>
+    <p style="font-size:13px;color:var(--ink-soft);margin:0 0 16px"><b id="np_num">This invoice</b> has been sent. Press <b>New</b> to start a fresh invoice for the next customer.</p>
+    <div class="actions" style="justify-content:center">
+      <button class="btn btn-ghost" onclick="closeNewPrompt()">Keep editing</button>
+      <button class="btn btn-gold" onclick="closeNewPrompt(); newSingle();">＋ New invoice</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 <datalist id="terms"><option>Lifetime</option><option>Yearly</option><option>Monthly</option><option>One-time</option></datalist>
 
@@ -691,9 +704,10 @@ function itemAdd(item,desc,qty,price){
 }
 function pkgAdd(sel){ if(sel.value==='') return; var p=CATALOG[+sel.value]; itemAdd(p.name,document.getElementById('s_bill').value||'Lifetime',1,p.price); sel.value=''; }
 function newSingle(){
-  CUR_REMOTE=null;
-  if(sbReady()){ document.getElementById('s_no').value=''; document.getElementById('s_no').placeholder='Auto — assigned on save'; }
-  else { document.getElementById('s_no').value=SETTINGS.nextNumber; document.getElementById('s_no').placeholder=''; }
+  CUR_REMOTE=null; CUR_NUM=null; CUR_SIG=null; CUR_ISSUER=''; PROMPTED_FOR=null;
+  var sn=document.getElementById('s_no'); sn.readOnly=true;
+  if(sbReady()){ sn.value=''; sn.placeholder='Auto — assigned automatically'; }
+  else { sn.value=SETTINGS.nextNumber; sn.placeholder=''; sn.readOnly=false; }
   document.getElementById('s_status').value='Unpaid';
   document.getElementById('s_date').value=todayISO();
   document.getElementById('s_due').value=plusDaysISO(7);
@@ -938,15 +952,34 @@ async function makePdf(inv){
   var c=await invoiceCanvas(inv); addCanvasToPdf(pdf,c);
   return pdf;
 }
-var CUR_REMOTE=null;
+var CUR_REMOTE=null, CUR_NUM=null, CUR_SIG=null, CUR_ISSUER='';
+function invSig(inv){
+  return JSON.stringify({n:inv.name,p:inv.phone,e:inv.email,b:inv.bill,s:inv.status,d:inv.date,du:inv.due,
+    it:(inv.items||[]).map(function(x){return [x.item,x.desc,x.qty,x.price];}),
+    tx:inv.taxOn,tr:inv.taxRate,dc:inv.discOn,ds:inv.disc,an:inv.annualOn,ap:inv.annualPct,
+    bt:inv.buyerTin,br:inv.buyerReg,cl:inv.classification});
+}
+var PROMPTED_FOR=null;
+function promptNewInvoice(num){
+  if(!num || PROMPTED_FOR===num) return;
+  PROMPTED_FOR=num;
+  document.getElementById('np_num').textContent=num;
+  document.getElementById('newPromptModal').classList.add('show');
+}
+function closeNewPrompt(){ document.getElementById('newPromptModal').classList.remove('show'); }
 async function ensureIssuedSingle(inv){
-  if((inv.number||'').trim()){ inv.remoteId=CUR_REMOTE; inv.synced=!!CUR_REMOTE; return inv; }
+  var sig=invSig(inv);
+  // Reuse the number ONLY if this exact invoice was already issued and unchanged since
+  if(CUR_NUM && CUR_SIG===sig){ inv.number=CUR_NUM; inv.remoteId=CUR_REMOTE; inv.synced=!!CUR_REMOTE; inv.issuer=CUR_ISSUER; return inv; }
+  inv.number='';
   if(sbReady()){
     toast('Recording invoice…');
-    try{ var r=await issueInvoiceRemote(inv); inv.number=r.number; inv.remoteId=r.id; inv.synced=true; inv.issuer=(SESSION&&SESSION.username)||''; CUR_REMOTE=r.id; document.getElementById('s_no').value=r.number; }
+    try{ var r=await issueInvoiceRemote(inv); inv.number=r.number; inv.remoteId=r.id; inv.synced=true; inv.issuer=(SESSION&&SESSION.username)||'';
+      CUR_REMOTE=r.id; CUR_NUM=r.number; CUR_SIG=sig; CUR_ISSUER=inv.issuer; document.getElementById('s_no').value=r.number; }
     catch(e){ console.error(e); toast('⚠ Could not record to server — produced without a number'); }
   } else if(SETTINGS.nextNumber){
-    inv.number=SETTINGS.nextNumber; document.getElementById('s_no').value=inv.number; SETTINGS.nextNumber=bumpNumber(SETTINGS.nextNumber,1); persist();
+    inv.number=SETTINGS.nextNumber; CUR_NUM=inv.number; CUR_SIG=sig; document.getElementById('s_no').value=inv.number;
+    SETTINGS.nextNumber=bumpNumber(SETTINGS.nextNumber,1); persist();
   }
   return inv;
 }
@@ -963,6 +996,7 @@ async function downloadSingle(){
       try{ await tgSendInvoice(inv, pdf.output("blob"), name); toast('Recorded · downloaded · sent to Telegram ✓'); }
       catch(e){ toast('Downloaded · Telegram failed: '+e.message); console.error(e); }
     } else { toast('Recorded & downloaded · '+(inv.number||'')); }
+    promptNewInvoice(inv.number);
   }
   catch(e){ toast('PDF failed — check internet for libraries'); console.error(e); }
 }
@@ -979,7 +1013,7 @@ async function sendSingleTelegram(){
   if(!tgConfigured()){ toast('Set Telegram bot token & chat ID in ⚙ Settings'); return; }
   inv=await ensureIssuedSingle(inv);
   toast('Building & sending…');
-  try{ var pdf=await makePdf(inv); await tgSendInvoice(inv, pdf.output("blob"), fileName(inv)); toast('Recorded & sent to Telegram ✓ · '+(inv.number||'')); }
+  try{ var pdf=await makePdf(inv); await tgSendInvoice(inv, pdf.output("blob"), fileName(inv)); toast('Recorded & sent to Telegram ✓ · '+(inv.number||'')); promptNewInvoice(inv.number); }
   catch(e){ toast('Telegram failed: '+e.message); console.error(e); }
 }
 
