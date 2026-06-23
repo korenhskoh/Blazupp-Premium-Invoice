@@ -470,7 +470,7 @@
       <div class="field"><label>Next invoice no.</label><input id="set_next"></div>
     </div>
     <div class="field"><label>Thank-you / payment note</label><textarea id="set_thanks" rows="2"></textarea></div>
-    <div class="field"><label>PDF file name format <small style="color:var(--ink-soft)">placeholders: {name} {bill} {date} {number} {status} {total} {phone} {company} · ".pdf" added automatically</small></label><input id="set_filetpl" placeholder="{name}_{bill}_{date}_Blazupp_invoice"></div>
+    <div class="field"><label>PDF file name format <small style="color:var(--ink-soft)">placeholders: {name} {bill} {date} {inv} (invoice no.) {status} {total} {phone} {company} · ".pdf" added automatically</small></label><input id="set_filetpl" placeholder="{name}_{bill}_{date}_{inv}_Blazupp_invoice"></div>
     <div class="field"><label>Annual maintenance % — optional yearly charge <small style="color:var(--ink-soft)">sets the allowed range &amp; default on the invoice editor</small></label>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
         <div><div style="font-size:11px;color:var(--ink-soft);margin-bottom:3px">Min %</div><input id="set_annmin" type="number" min="0" max="100" step="0.5" placeholder="2"></div>
@@ -569,7 +569,7 @@ var SETTINGS = {
   thanks:'Please make payment by the due date via bank transfer to the account above. Thank you for your business! For any questions, contact us at +60 11-2309 9692.',
   sellerTin:'', sellerBrn:'', sellerSst:'', msic:'', classification:'',   // e-Invoice (LHDN/MyInvois) identity
   tgToken:'', tgChat:'', tgAuto:false,   // Telegram bot delivery
-  fileTpl:'{name}_{bill}_{date}_Blazupp_invoice',
+  fileTpl:'{name}_{bill}_{date}_{inv}_Blazupp_invoice',
   annualPct:3, annualMin:2, annualMax:5,
   sbUrl:'', sbKey:''
 };
@@ -825,11 +825,11 @@ function fileName(inv){
     name: safeName(inv.name)||'Customer', customer: safeName(inv.name)||'Customer',
     company: safeName(SETTINGS.company)||'Blazupp',
     bill: safeName(inv.bill)||'Invoice', type: safeName(inv.bill)||'Invoice',
-    date: fileDate(inv.date), number: safeName(inv.number)||'', no: safeName(inv.number)||'',
+    date: fileDate(inv.date), number: safeName(inv.number)||'', no: safeName(inv.number)||'', inv: safeName(inv.number)||'',
     status: safeName(inv.status)||'', total: Number(t.total||0).toFixed(2),
     currency: safeName(SETTINGS.currency)||'', phone: safeName(inv.phone)||''
   };
-  var tpl=(SETTINGS.fileTpl&&SETTINGS.fileTpl.trim())||'{name}_{bill}_{date}_Blazupp_invoice';
+  var tpl=(SETTINGS.fileTpl&&SETTINGS.fileTpl.trim())||'{name}_{bill}_{date}_{inv}_Blazupp_invoice';
   var out=tpl.replace(/\{(\w+)\}/g,function(m,k){ k=k.toLowerCase(); return Object.prototype.hasOwnProperty.call(map,k)? map[k] : m; });
   out=safeName(out).replace(/\s*_\s*/g,'_').replace(/_{2,}/g,'_').replace(/^[_\-]+|[_\-]+$/g,'').trim();
   if(!out) out='invoice';
