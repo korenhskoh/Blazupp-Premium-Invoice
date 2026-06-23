@@ -404,6 +404,7 @@
       <b style="font-size:14px">Audit log</b>
       <span style="font-size:12.5px;color:var(--ink-soft)">Logins, account changes, and every invoice issued.</span>
       <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="loadAudit()">Refresh</button>
+      <span id="audit_live" style="font-size:11px;color:#16a34a;margin-left:10px"></span>
     </div>
     <div class="card" id="auditList" style="padding:6px 0"></div>
   </div>
@@ -1380,10 +1381,20 @@ function importJSON(ev){
 function switchTab(name){
   document.querySelectorAll('.tab').forEach(function(t){ t.classList.toggle('active',t.dataset.tab===name); });
   document.querySelectorAll('.panel').forEach(function(p){ p.classList.toggle('active',p.id==='panel-'+name); });
+  stopAuditLive();
   if(name==='staff') loadStaff();
-  if(name==='audit') loadAudit();
+  if(name==='audit') startAuditLive();
   if(name==='records') loadRecords();
 }
+var AUDIT_TIMER=null;
+function startAuditLive(){
+  loadAudit();
+  AUDIT_TIMER=setInterval(function(){
+    if(document.getElementById('panel-audit').classList.contains('active') && !document.hidden) loadAudit(true);
+    else stopAuditLive();
+  }, 8000);
+}
+function stopAuditLive(){ if(AUDIT_TIMER){ clearInterval(AUDIT_TIMER); AUDIT_TIMER=null; } }
 
 /* ---------------- Auth ---------------- */
 function showLogin(){
@@ -1480,11 +1491,12 @@ async function resetStaffPwd(id,uname){
 }
 
 /* ---------------- Audit (admin) ---------------- */
-async function loadAudit(){
+async function loadAudit(quiet){
   var host=document.getElementById('auditList');
-  host.innerHTML='<div class="empty">Loading…</div>';
+  if(!quiet) host.innerHTML='<div class="empty">Loading…</div>';
   try{
     var rows=await sbRpc('app_list_audit',{p_token:SESSION.token});
+    var live=document.getElementById('audit_live'); if(live) live.textContent='● live · updated '+new Date().toLocaleTimeString();
     if(!rows||!rows.length){ host.innerHTML='<div class="empty">No activity yet.</div>'; return; }
     host.innerHTML='<div class="audit-row audit-head"><span>Time</span><span>Staff</span><span>Action</span><span>Detail</span></div>'+rows.map(function(r){
       var d=r.detail?esc(JSON.stringify(r.detail).replace(/[{}"]/g,'').slice(0,90)):'';
@@ -1492,7 +1504,7 @@ async function loadAudit(){
         +'<span class="who"><b>'+esc(r.actor||'—')+'</b></span>'
         +'<span class="act">'+esc(r.action)+'</span><span class="dt">'+d+'</span></div>';
     }).join('');
-  }catch(e){ host.innerHTML='<div class="empty">Only admins can view the audit log.</div>'; console.error(e); }
+  }catch(e){ if(!quiet) host.innerHTML='<div class="empty">Only admins can view the audit log.</div>'; console.error(e); }
 }
 
 (function init(){
