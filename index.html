@@ -257,7 +257,7 @@
     <button class="tab active" data-tab="single" onclick="switchTab('single')">Single</button>
     <button class="tab" data-tab="bulk" onclick="switchTab('bulk')">Bulk</button>
     <button class="tab" data-tab="batch" onclick="switchTab('batch')">Batch<span class="pill" id="batchCount">0</span></button>
-    <button class="tab admin-only" data-tab="records" onclick="switchTab('records')" style="display:none">Records</button>
+    <button class="tab" data-tab="records" onclick="switchTab('records')">Records</button>
     <button class="tab admin-only" data-tab="staff" onclick="switchTab('staff')" style="display:none">Staff</button>
     <button class="tab admin-only" data-tab="audit" onclick="switchTab('audit')" style="display:none">Audit</button>
   </div>
@@ -410,14 +410,18 @@
 
   <!-- ============ RECORDS (admin) ============ -->
   <div class="panel" id="panel-records">
-    <div class="batch-toolbar">
-      <b style="font-size:14px">Invoice records</b>
-      <label class="inline-toggle" style="margin:0">Staff
+    <div class="batch-toolbar" style="flex-wrap:wrap;gap:8px">
+      <b style="font-size:14px" id="rec_title">Invoice records</b>
+      <input id="rec_q" placeholder="Search no. / customer / staff" oninput="renderRecords()" style="padding:6px 9px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;min-width:200px">
+      <label class="inline-toggle" style="margin:0" id="rec_filter_wrap">Staff
         <select id="rec_filter" onchange="renderRecords()" style="margin-left:6px;padding:5px 8px;border:1px solid var(--line);border-radius:8px">
           <option value="">All staff</option>
         </select>
       </label>
+      <label class="inline-toggle" style="margin:0">From <input id="rec_from" type="date" onchange="renderRecords()" style="margin-left:4px;padding:4px 6px;border:1px solid var(--line);border-radius:8px"></label>
+      <label class="inline-toggle" style="margin:0">To <input id="rec_to" type="date" onchange="renderRecords()" style="margin-left:4px;padding:4px 6px;border:1px solid var(--line);border-radius:8px"></label>
       <button class="btn btn-ghost btn-sm" onclick="loadRecords()">Refresh</button>
+      <button class="btn btn-ghost btn-sm" onclick="exportRecordsCsv()">⤓ CSV</button>
       <div class="sum" id="rec_sum" style="margin-left:auto"></div>
     </div>
     <div class="card" id="recordsList" style="padding:6px 0"></div>
@@ -533,6 +537,20 @@
   </div>
 </div>
 
+<!-- re-auth (session expired) -->
+<div class="modal-bg" id="reauthModal">
+  <div class="modal" style="max-width:400px">
+    <h2 style="margin-bottom:4px">Session expired</h2>
+    <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 12px">Re-enter your password to continue — your invoice will be recorded right after you sign in.</p>
+    <div class="field"><label>Username</label><input id="ra_user" readonly></div>
+    <div class="field"><label>Password</label><input id="ra_pass" type="password" onkeydown="if(event.key==='Enter')reauthSubmit()"></div>
+    <div id="ra_err" style="color:#c0392b;font-size:12px;min-height:16px;margin:4px 0"></div>
+    <div class="actions" style="justify-content:flex-end">
+      <button class="btn btn-gold" id="ra_btn" onclick="reauthSubmit()">Sign in</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 <datalist id="terms"><option>Lifetime</option><option>Yearly</option><option>Monthly</option><option>One-time</option></datalist>
 
@@ -589,13 +607,20 @@ async function sbRpc(fn,params){
 }
 async function issueInvoiceRemote(inv){
   var t=totalsOf(inv);
-  var rows=await sbRpc('issue_invoice',{
+  var args={
     p_token:(SESSION&&SESSION.token)||'', p_customer_name:inv.name||'', p_customer_phone:inv.phone||'',
     p_customer_email:inv.email||'', p_billing_type:inv.bill||'', p_status:inv.status||'Unpaid',
     p_issue_date:inv.date||null, p_due_date:inv.due||null, p_items:inv.items||[],
     p_subtotal:t.sub, p_tax:t.tax, p_discount:t.disc, p_total:t.total, p_currency:SETTINGS.currency,
-    p_buyer_tin:inv.buyerTin||'', p_buyer_reg:inv.buyerReg||'', p_classification:inv.classification||''
-  });
+    p_buyer_tin:inv.buyerTin||'', p_buyer_reg:inv.buyerReg||'', p_classification:inv.classification||'',
+    p_annual_pct:(inv.annualOn?num(inv.annualPct):0)
+  };
+  var rows;
+  try{ rows=await sbRpc('issue_invoice',args); }
+  catch(e){
+    if(/not_authenticated|JWT|401/i.test(e.message||'')){ await reauth(); args.p_token=(SESSION&&SESSION.token)||''; rows=await sbRpc('issue_invoice',args); }
+    else throw e;
+  }
   return Array.isArray(rows)?rows[0]:rows;   // {id, number}
 }
 
@@ -959,6 +984,31 @@ function invSig(inv){
     tx:inv.taxOn,tr:inv.taxRate,dc:inv.discOn,ds:inv.disc,an:inv.annualOn,ap:inv.annualPct,
     bt:inv.buyerTin,br:inv.buyerReg,cl:inv.classification});
 }
+var REAUTH_RES=null;
+function reauth(){
+  return new Promise(function(resolve,reject){
+    REAUTH_RES={resolve:resolve,reject:reject};
+    document.getElementById('ra_user').value=(SESSION&&SESSION.username)||'';
+    document.getElementById('ra_pass').value='';
+    document.getElementById('ra_err').textContent='';
+    document.getElementById('reauthModal').classList.add('show');
+    setTimeout(function(){ try{document.getElementById('ra_pass').focus();}catch(e){} },120);
+  });
+}
+async function reauthSubmit(){
+  var u=(SESSION&&SESSION.username)||document.getElementById('ra_user').value;
+  var p=document.getElementById('ra_pass').value, btn=document.getElementById('ra_btn');
+  btn.disabled=true;
+  try{
+    var r=await sbRpc('app_login',{p_username:u,p_password:p}); r=Array.isArray(r)?r[0]:r;
+    if(!r||!r.token) throw new Error('no token');
+    SESSION.token=r.token; SESSION.role=r.role; SESSION.display=r.display_name;
+    try{ localStorage.setItem('blazupp_session', JSON.stringify(SESSION)); }catch(e){}
+    document.getElementById('reauthModal').classList.remove('show');
+    if(REAUTH_RES){ REAUTH_RES.resolve(true); REAUTH_RES=null; }
+  }catch(e){ document.getElementById('ra_err').textContent='Sign-in failed — check your password.'; }
+  btn.disabled=false;
+}
 var PROMPTED_FOR=null;
 function promptNewInvoice(num){
   if(!num || PROMPTED_FOR===num) return;
@@ -1125,6 +1175,9 @@ async function loadLedger(){
 var RECORDS=[];
 async function loadRecords(){
   var host=document.getElementById('recordsList'), sel=document.getElementById('rec_filter');
+  var admin=(SESSION&&SESSION.role==='admin');
+  document.getElementById('rec_title').textContent=admin?'Invoice records':'My invoice records';
+  document.getElementById('rec_filter_wrap').style.display=admin?'':'none';
   host.innerHTML='<div class="empty">Loading…</div>';
   try{
     RECORDS=await sbRpc('list_invoices',{p_token:SESSION.token})||[];
@@ -1137,21 +1190,84 @@ async function loadRecords(){
     renderRecords();
   }catch(e){ host.innerHTML='<div class="empty">Could not load records — please sign in again.</div>'; document.getElementById('rec_sum').textContent=''; console.error(e); }
 }
+function recFiltered(){
+  var f=document.getElementById('rec_filter').value;
+  var q=(document.getElementById('rec_q').value||'').trim().toLowerCase();
+  var from=document.getElementById('rec_from').value, to=document.getElementById('rec_to').value;
+  return RECORDS.filter(function(r){
+    if(f && r.issuer!==f) return false;
+    var d=String(r.issue_date||r.created_at||'').slice(0,10);
+    if(from && d<from) return false;
+    if(to && d>to) return false;
+    if(q){ var hay=((r.number||'')+' '+(r.customer_name||'')+' '+(r.issuer||'')+' '+(r.customer_phone||'')).toLowerCase(); if(hay.indexOf(q)<0) return false; }
+    return true;
+  });
+}
 function renderRecords(){
   var host=document.getElementById('recordsList'), sumEl=document.getElementById('rec_sum');
-  var f=document.getElementById('rec_filter').value;
-  var rows=f?RECORDS.filter(function(r){return r.issuer===f;}):RECORDS;
-  if(!rows.length){ host.innerHTML='<div class="empty">No invoices'+(f?' from '+esc(f):' recorded yet')+'.</div>'; sumEl.textContent=''; return; }
+  var rows=recFiltered();
+  if(!rows.length){ host.innerHTML='<div class="empty">No matching records.</div>'; sumEl.textContent=''; return; }
   var total=rows.reduce(function(a,r){return a+Number(r.total||0);},0);
   var paid=rows.filter(function(r){return r.status==='Paid';}).reduce(function(a,r){return a+Number(r.total||0);},0);
-  sumEl.innerHTML='<b>'+rows.length+'</b> invoices · billed <b>'+money(total)+'</b> · paid <b>'+money(paid)+'</b>';
-  host.innerHTML='<table class="bulk" style="min-width:680px"><thead><tr><th>No.</th><th>Staff</th><th>Customer</th><th>Type</th>'
-    +'<th style="text-align:right">Total</th><th>Status</th><th>Date</th></tr></thead><tbody>'
-    +rows.map(function(r){ return '<tr><td style="padding:8px">'+esc(r.number)+'</td><td style="padding:8px"><b>'+esc(r.issuer||'')+'</b></td>'
-      +'<td style="padding:8px">'+esc(r.customer_name||'')+'<br><small style="color:#999">'+esc(r.customer_phone||'')+'</small></td>'
-      +'<td style="padding:8px">'+esc(r.billing_type||'')+'</td><td style="padding:8px;text-align:right;white-space:nowrap">'+money(Number(r.total||0))+'</td>'
-      +'<td style="padding:8px">'+esc(r.status||'')+'</td><td style="padding:8px;white-space:nowrap">'+esc(String(r.issue_date||r.created_at||'').slice(0,10))+'</td></tr>'; }).join('')
-    +'</tbody></table>';
+  var outstanding=total-paid;
+  sumEl.innerHTML='<b>'+rows.length+'</b> shown';
+  var card=function(lbl,val,col){ return '<div style="flex:1;min-width:130px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:10px 13px"><div style="font-size:10.5px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.05em">'+lbl+'</div><div style="font-size:18px;font-weight:800;color:'+col+'">'+val+'</div></div>'; };
+  var strip='<div style="display:flex;gap:10px;flex-wrap:wrap;padding:10px 12px 6px">'
+    +card('Total invoice bill', money(total), 'var(--deep)')
+    +card('Paid', money(paid), '#16a34a')
+    +card('Outstanding', money(outstanding), '#d97706')
+    +card('Invoices', String(rows.length), 'var(--blue)')
+    +'</div>';
+  host.innerHTML=strip+'<table class="bulk" style="min-width:760px"><thead><tr><th>No.</th><th>Staff</th><th>Customer</th><th>Type</th>'
+    +'<th style="text-align:right">Total</th><th>Status</th><th>Date</th><th></th></tr></thead><tbody>'
+    +rows.map(function(r){
+      var st=['Paid','Unpaid','Overdue'].map(function(s){return '<option'+(r.status===s?' selected':'')+'>'+s+'</option>';}).join('');
+      return '<tr><td style="padding:8px">'+esc(r.number)+'</td><td style="padding:8px"><b>'+esc(r.issuer||'')+'</b></td>'
+        +'<td style="padding:8px">'+esc(r.customer_name||'')+'<br><small style="color:#999">'+esc(r.customer_phone||'')+'</small></td>'
+        +'<td style="padding:8px">'+esc(r.billing_type||'')+'</td><td style="padding:8px;text-align:right;white-space:nowrap">'+money(Number(r.total||0))+'</td>'
+        +'<td style="padding:8px"><select onchange="setRecordStatus(\''+r.id+'\',this.value)" style="padding:3px 6px;border:1px solid var(--line);border-radius:7px;font-size:12px">'+st+'</select></td>'
+        +'<td style="padding:8px;white-space:nowrap">'+esc(String(r.issue_date||r.created_at||'').slice(0,10))+'</td>'
+        +'<td style="padding:8px;white-space:nowrap"><button class="op" onclick="downloadRecord(\''+r.id+'\')">⬇ PDF</button> <button class="op" onclick="telegramRecord(\''+r.id+'\')">✈</button></td></tr>';
+    }).join('')+'</tbody></table>';
+}
+function recordToInv(r){
+  var items=r.items||[]; if(typeof items==='string'){ try{items=JSON.parse(items);}catch(e){items=[];} }
+  var sub=items.reduce(function(a,it){return a+num(it.qty)*num(it.price);},0);
+  var disc=num(r.discount), afterDisc=Math.max(0,sub-disc), tax=num(r.tax);
+  return { number:r.number, issuer:r.issuer, name:r.customer_name, phone:r.customer_phone, email:r.customer_email,
+    bill:r.billing_type, status:r.status, date:String(r.issue_date||'').slice(0,10), due:String(r.due_date||'').slice(0,10),
+    items:items, discOn:disc>0, disc:disc, taxOn:tax>0, taxRate:(afterDisc>0?(tax/afterDisc*100):0),
+    annualOn:num(r.annual_pct)>0, annualPct:num(r.annual_pct),
+    buyerTin:r.buyer_tin, buyerReg:r.buyer_reg, classification:r.classification };
+}
+function recById(id){ return RECORDS.find(function(r){return String(r.id)===String(id);}); }
+async function downloadRecord(id){
+  var r=recById(id); if(!r) return; toast('Building PDF…');
+  try{ var inv=recordToInv(r); var pdf=await makePdf(inv); pdf.save(fileName(inv)); }
+  catch(e){ toast('PDF failed'); console.error(e); }
+}
+async function telegramRecord(id){
+  var r=recById(id); if(!r) return;
+  if(!tgConfigured()){ toast('Set Telegram in ⚙ Settings'); return; }
+  toast('Sending to Telegram…');
+  try{ var inv=recordToInv(r); var pdf=await makePdf(inv); await tgSendInvoice(inv, pdf.output('blob'), fileName(inv)); toast('Sent to Telegram ✓'); }
+  catch(e){ toast('Telegram failed: '+e.message); console.error(e); }
+}
+async function setRecordStatus(id, status){
+  try{ await sbRpc('set_invoice_status',{p_token:SESSION.token, p_id:id, p_status:status});
+    var r=recById(id); if(r) r.status=status; renderRecords(); toast('Status → '+status);
+  }catch(e){ toast('Could not update status'); console.error(e); }
+}
+function exportRecordsCsv(){
+  var rows=recFiltered(); if(!rows.length){ toast('Nothing to export'); return; }
+  var head=['Number','Staff','Customer','Phone','Email','Type','Total','Status','Issued','Due'];
+  var esc2=function(v){ v=String(v==null?'':v); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; };
+  var lines=[head.join(',')].concat(rows.map(function(r){
+    return [r.number,r.issuer,r.customer_name,r.customer_phone,r.customer_email,r.billing_type,Number(r.total||0).toFixed(2),r.status,String(r.issue_date||'').slice(0,10),String(r.due_date||'').slice(0,10)].map(esc2).join(',');
+  }));
+  var blob=new Blob([lines.join('\n')],{type:'text/csv'}), url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download='Blazupp_records_'+new Date().toISOString().slice(0,10)+'.csv'; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){URL.revokeObjectURL(url);},5000); toast('CSV exported');
 }
 
 /* ---------- Bulk ---------- */
